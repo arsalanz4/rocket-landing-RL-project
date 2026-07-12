@@ -55,6 +55,14 @@ EVAL_WINDOW       = 20     # episodes to average over when checking success rate
 EVAL_FREQ         = 20_000 # env steps between evaluations
 N_ENVS            = 8
 
+# A 10M-step run makes ~500 independent eval checks. With a 20-episode window,
+# a policy whose true success rate is well below threshold can still clear it
+# on a single lucky draw somewhere across those 500 attempts (this is exactly
+# what caused the 3->4->5 jump with no real mastery at either stage). Requiring
+# several consecutive passing evals before advancing makes a noise-driven
+# advance astronomically less likely without needing a much larger EVAL_WINDOW.
+REQUIRED_CONSECUTIVE_PASSES = 3
+
 
 # ── Stage helpers ─────────────────────────────────────────────────────────────
 
@@ -109,6 +117,7 @@ class CurriculumCallback(BaseCallback):
         self.stage       = start_stage
         self._next_eval  = EVAL_FREQ
         self._ep_results = []   # list of bools: True = landed
+        self._consecutive_passes = 0
 
     def _on_training_start(self) -> None:
         # When resuming from a checkpoint, num_timesteps already reflects the
@@ -236,10 +245,17 @@ class CurriculumCallback(BaseCallback):
         success_rate = self._run_eval()
 
         threshold = ADVANCE_THRESHOLD[self.stage]
-        print(f"\n  step {self.num_timesteps:>8,}  |  stage {self.stage}  "
-              f"|  success rate: {success_rate*100:.0f}%  (advance at {threshold*100:.0f}%)")
+        if success_rate >= threshold:
+            self._consecutive_passes += 1
+        else:
+            self._consecutive_passes = 0
 
-        if success_rate >= threshold and self.stage < MAX_STAGE:
+        print(f"\n  step {self.num_timesteps:>8,}  |  stage {self.stage}  "
+              f"|  success rate: {success_rate*100:.0f}%  (advance at {threshold*100:.0f}%, "
+              f"{self._consecutive_passes}/{REQUIRED_CONSECUTIVE_PASSES} consecutive passes)")
+
+        if self._consecutive_passes >= REQUIRED_CONSECUTIVE_PASSES and self.stage < MAX_STAGE:
+            self._consecutive_passes = 0
             self._advance_stage()
 
         return True
