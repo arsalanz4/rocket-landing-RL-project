@@ -16,6 +16,7 @@ Usage
 
 import argparse
 import os
+import re
 
 import numpy as np
 from stable_baselines3 import PPO
@@ -96,6 +97,12 @@ class CurriculumCallback(BaseCallback):
         self._next_eval  = EVAL_FREQ
         self._ep_results = []   # list of bools: True = landed
 
+    def _on_training_start(self) -> None:
+        # When resuming from a checkpoint, num_timesteps already reflects the
+        # steps done in prior runs. Anchor the next eval to that, otherwise
+        # eval fires on almost every step until _next_eval catches up.
+        self._next_eval = self.num_timesteps + EVAL_FREQ
+
     # ── Evaluation ───────────────────────────────────────────────────────────
 
     def _run_eval(self) -> float:
@@ -164,7 +171,7 @@ class CurriculumCallback(BaseCallback):
                 vf_coef=0.5,
                 max_grad_norm=0.5,
                 tensorboard_log=LOG_DIR,
-                verbose=0,
+                verbose=1,
             )
             # Copy shared feature-extractor weights from old model
             try:
@@ -182,9 +189,10 @@ class CurriculumCallback(BaseCallback):
             self.model = new_model
         else:
             self.model.set_env(new_vec)
-            # Clear the rollout buffer — it holds observations normalised under
-            # the old env stats. Stale data causes NaN in the next PPO update.
-            self.model.rollout_buffer.reset()
+            # No manual buffer reset needed: SB3's collect_rollouts() already
+            # calls rollout_buffer.reset() at the start of every rollout. Doing
+            # it here mid-rollout desyncs pos/full from the collection loop's
+            # own step counter, so train() later asserts on a non-full buffer.
 
     # ── Callback hook ─────────────────────────────────────────────────────────
 
@@ -222,11 +230,24 @@ def build_model(train_env: VecNormalize, stage: int) -> PPO:
         vf_coef=0.5,
         max_grad_norm=0.5,
         tensorboard_log=LOG_DIR,
-        verbose=0,
+        verbose=1,
     )
 
 
 # ── Training ──────────────────────────────────────────────────────────────────
+
+def find_latest_checkpoint():
+    """Return path (without .zip) to the highest-step checkpoint in SAVE_DIR, or None."""
+    if not os.path.isdir(SAVE_DIR):
+        return None
+    best_path, best_steps = None, -1
+    for name in os.listdir(SAVE_DIR):
+        m = re.match(r"ppo_rocket_(\d+)_steps\.zip$", name)
+        if m and int(m.group(1)) > best_steps:
+            best_steps = int(m.group(1))
+            best_path = os.path.join(SAVE_DIR, name[:-4])
+    return best_path
+
 
 def train(total_steps: int):
     stage     = load_stage()
@@ -239,9 +260,17 @@ def train(total_steps: int):
         saved_vec = VecNormalize.load(NORM_STATS, make_vec_env(make_env_fn(stage), n_envs=N_ENVS))
         train_env.obs_rms = saved_vec.obs_rms
         train_env.ret_rms = saved_vec.ret_rms
+    elif find_latest_checkpoint():
+        ckpt = find_latest_checkpoint()
+        print(f"No best_model/vec_normalize found. Resuming stage {stage} from "
+              f"latest checkpoint {ckpt}.zip (observation normalization stats "
+              f"will re-adapt from scratch) …")
+        model = PPO.load(ckpt, env=train_env)
     else:
         print(f"Starting fresh from stage {stage} …")
         model = build_model(train_env, stage)
+
+    model.verbose = 1  # PPO.load() restores the saved verbose value; force console output on
 
     curriculum_cb = CurriculumCallback(train_env, stage)
 
