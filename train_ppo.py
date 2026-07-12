@@ -183,6 +183,7 @@ class CurriculumCallback(BaseCallback):
                 ent_coef=0.005,
                 vf_coef=0.5,
                 max_grad_norm=0.5,
+                target_kl=0.03,
                 tensorboard_log=LOG_DIR,
                 verbose=1,
             )
@@ -243,6 +244,7 @@ def build_model(train_env: VecNormalize, stage: int) -> PPO:
         ent_coef=0.01,
         vf_coef=0.5,
         max_grad_norm=0.5,
+        target_kl=0.03,
         tensorboard_log=LOG_DIR,
         verbose=1,
     )
@@ -284,7 +286,8 @@ def train(total_steps: int):
         print(f"Starting fresh from stage {stage} …")
         model = build_model(train_env, stage)
 
-    model.verbose = 1  # PPO.load() restores the saved verbose value; force console output on
+    model.verbose   = 1     # PPO.load() restores the saved verbose value; force console output on
+    model.target_kl = 0.03  # PPO.load() restores the saved target_kl; older checkpoints had None
 
     curriculum_cb = CurriculumCallback(train_env, stage)
 
