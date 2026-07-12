@@ -37,7 +37,20 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 os.makedirs(LOG_DIR,  exist_ok=True)
 
 # ── Curriculum settings ───────────────────────────────────────────────────────
-ADVANCE_THRESHOLD = 0.80   # success rate needed to move to next stage
+# Stages 3-5 have gimbal=False, so horizontal position is never actively
+# corrected (the auto-PD only stabilises attitude) and pad < x_range, so a
+# perfect agent still lands off-pad whenever |initial x| > pad. Ceiling is
+# ~pad/x_range: stage 3 ~50%, stages 4-5 ~40%. Thresholds below are ~90% of
+# that structural ceiling so the curriculum can still advance once vertical
+# control is mastered, rather than requiring an unreachable 80% everywhere.
+ADVANCE_THRESHOLD = {
+    1: 0.80,
+    2: 0.80,
+    3: 0.45,
+    4: 0.35,
+    5: 0.35,
+    6: 0.80,
+}
 EVAL_WINDOW       = 20     # episodes to average over when checking success rate
 EVAL_FREQ         = 20_000 # env steps between evaluations
 N_ENVS            = 8
@@ -203,10 +216,11 @@ class CurriculumCallback(BaseCallback):
         self._next_eval += EVAL_FREQ
         success_rate = self._run_eval()
 
+        threshold = ADVANCE_THRESHOLD[self.stage]
         print(f"\n  step {self.num_timesteps:>8,}  |  stage {self.stage}  "
-              f"|  success rate: {success_rate*100:.0f}%")
+              f"|  success rate: {success_rate*100:.0f}%  (advance at {threshold*100:.0f}%)")
 
-        if success_rate >= ADVANCE_THRESHOLD and self.stage < MAX_STAGE:
+        if success_rate >= threshold and self.stage < MAX_STAGE:
             self._advance_stage()
 
         return True
