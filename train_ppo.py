@@ -116,6 +116,24 @@ class CurriculumCallback(BaseCallback):
         # eval fires on almost every step until _next_eval catches up.
         self._next_eval = self.num_timesteps + EVAL_FREQ
 
+    def _on_rollout_end(self) -> None:
+        # Diagnostic: catch NaN/Inf in the buffer BEFORE train() consumes it,
+        # so a crash tells us whether bad data entered from the env/GAE
+        # computation vs. arising purely inside the gradient update.
+        buf = self.model.rollout_buffer
+        for name in ("observations", "actions", "rewards", "returns", "values", "log_probs", "advantages"):
+            arr = getattr(buf, name, None)
+            if arr is None:
+                continue
+            bad = ~np.isfinite(arr)
+            if bad.any():
+                idx = tuple(np.argwhere(bad)[0])
+                raise RuntimeError(
+                    f"rollout_buffer.{name} has {bad.sum()}/{arr.size} non-finite values "
+                    f"(stage {self.stage}, step {self.num_timesteps}). First bad index "
+                    f"{idx} = {arr[idx]!r}. Aborting before train() to pinpoint the source."
+                )
+
     # ── Evaluation ───────────────────────────────────────────────────────────
 
     def _run_eval(self) -> float:
