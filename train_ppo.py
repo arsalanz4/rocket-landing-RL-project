@@ -113,17 +113,21 @@ class CurriculumCallback(BaseCallback):
 
     def __init__(self, train_env: VecNormalize, start_stage: int):
         super().__init__()
-        self.train_env   = train_env
-        self.stage       = start_stage
-        self._next_eval  = EVAL_FREQ
-        self._ep_results = []   # list of bools: True = landed
+        self.train_env        = train_env
+        self.stage            = start_stage
+        self._next_eval       = EVAL_FREQ
         self._consecutive_passes = 0
+        self._pending_advance = False  # set True mid-rollout, applied at next rollout start
 
     def _on_training_start(self) -> None:
-        # When resuming from a checkpoint, num_timesteps already reflects the
-        # steps done in prior runs. Anchor the next eval to that, otherwise
-        # eval fires on almost every step until _next_eval catches up.
         self._next_eval = self.num_timesteps + EVAL_FREQ
+
+    def _on_rollout_start(self) -> None:
+        # Apply any pending stage advance NOW — the buffer was just reset by
+        # SB3 so there are no stale observations that could cause NaN.
+        if self._pending_advance:
+            self._pending_advance = False
+            self._do_advance_stage()
 
     def _on_rollout_end(self) -> None:
         # Diagnostic: catch NaN/Inf in the buffer BEFORE train() consumes it,
@@ -169,6 +173,11 @@ class CurriculumCallback(BaseCallback):
     # ── Stage advance ─────────────────────────────────────────────────────────
 
     def _advance_stage(self):
+        # Don't switch envs mid-rollout — flag it and apply at next rollout start
+        self._pending_advance = True
+        print(f"\n  >>> Stage advance queued (will apply at next rollout start)")
+
+    def _do_advance_stage(self):
         self.stage += 1
         save_stage(self.stage)
         cfg = STAGES[self.stage]
@@ -230,10 +239,7 @@ class CurriculumCallback(BaseCallback):
             self.model = new_model
         else:
             self.model.set_env(new_vec)
-            # No manual buffer reset needed: SB3's collect_rollouts() already
-            # calls rollout_buffer.reset() at the start of every rollout. Doing
-            # it here mid-rollout desyncs pos/full from the collection loop's
-            # own step counter, so train() later asserts on a non-full buffer.
+            # Buffer was already reset by SB3 at rollout start before we got here
 
     # ── Callback hook ─────────────────────────────────────────────────────────
 

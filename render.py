@@ -24,10 +24,15 @@ import pygame
 # Allow running from the project root
 sys.path.insert(0, os.path.dirname(__file__))
 from rocket_env import (
-    RocketLandingEnv, INIT_ALTITUDE, FUEL_CAPACITY,
-    LANDING_PAD_HALF, MAX_LANDING_VY, MAX_LANDING_VX,
+    RocketLandingEnv, FUEL_CAPACITY, STAGES,
+    MAX_LANDING_VY, MAX_LANDING_VX,
     MAX_GIMBAL_ANGLE, MAX_TILT,
 )
+
+# Load stage-1 config for display scaling (renderer uses stage from the env)
+_s1 = STAGES[1]
+INIT_ALTITUDE    = _s1["alt"]
+LANDING_PAD_HALF = _s1["pad"]
 
 # ── Display constants ─────────────────────────────────────────────────────────
 W, H          = 900, 700        # window size in pixels
@@ -75,17 +80,17 @@ def draw_gradient_sky(surf):
         pygame.draw.line(surf, (r, g, b), (0, row), (W, row))
 
 
-def draw_ground(surf):
+def draw_ground(surf, pad_half=LANDING_PAD_HALF):
     ground_y = world_to_screen(0, 0)[1]
     pygame.draw.rect(surf, GROUND_COL, (0, ground_y, W, H - ground_y))
 
-    # Landing pad
-    pad_left  = world_to_screen(-LANDING_PAD_HALF, 0)[0]
-    pad_right = world_to_screen( LANDING_PAD_HALF, 0)[0]
+    # Landing pad (size passed in so it reflects current curriculum stage)
+    pad_left  = world_to_screen(-pad_half, 0)[0]
+    pad_right = world_to_screen( pad_half, 0)[0]
     pygame.draw.rect(surf, PAD_COL, (pad_left, ground_y - 4, pad_right - pad_left, 4))
 
     # Pad edge markers
-    for mx in (-LANDING_PAD_HALF, LANDING_PAD_HALF):
+    for mx in (-pad_half, pad_half):
         sx = world_to_screen(mx, 0)[0]
         pygame.draw.rect(surf, PAD_COL, (sx - 3, ground_y - 12, 6, 12))
 
@@ -340,7 +345,8 @@ def run(mode: str):
                 s = env._state
                 speed_ok = abs(s["vy"]) <= MAX_LANDING_VY and abs(s["vx"]) <= MAX_LANDING_VX
                 upright  = abs(s["angle"]) <= MAX_TILT
-                on_pad   = abs(s["x"]) <= LANDING_PAD_HALF
+                pad_half = STAGES[env.stage]["pad"]
+                on_pad   = abs(s["x"]) <= pad_half
                 if s["y"] <= 1.0 and speed_ok and upright and on_pad:
                     outcome = "LANDED!"
                 elif s["y"] <= 1.0 and speed_ok and upright:
@@ -367,7 +373,7 @@ def run(mode: str):
 
         # ── Draw ──────────────────────────────────────────────────────────────
         screen.blit(sky_surf, (0, 0))
-        draw_ground(screen)
+        draw_ground(screen, pad_half=STAGES[env.stage]["pad"])
 
         # Exhaust trail (fades by alpha — draw oldest first)
         for i, (tx, ty) in enumerate(trail):
