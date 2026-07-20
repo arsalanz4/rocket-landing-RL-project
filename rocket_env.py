@@ -137,19 +137,18 @@ class RocketLandingEnv(gym.Env):
         s   = self._state
         cfg = self._cfg()
 
-        dist = np.sqrt(s["x"]**2 + (0.5 * s["y"])**2)
+        # Separate x and y terms so horizontal guidance has constant strength
+        # regardless of altitude. The old sqrt(x²+(0.5y)²) was dominated by y
+        # at high altitude, giving ~+380 shaping just for descending and making
+        # the x gradient invisible — agent learned vy control but ignored vx/x.
+        x_term = abs(s["x"])
+        y_term = s["y"]
 
-        # Desired descent speed: slow near ground, fast at altitude (sqrt(y) profile).
-        # Kills hovering (vy~0 at altitude is penalised) and freefall
-        # (vy=-40 near ground is penalised). v_max cap keeps it physically reachable.
-        v_target = -min(5.0, 0.6 * np.sqrt(max(s["y"], 1.0)))
+        v_target  = -min(5.0, 0.6 * np.sqrt(max(s["y"], 1.0)))
+        vx_desired = float(np.clip(-0.05 * s["x"], -15.0, 15.0))
+        v_err = abs(s["vy"] - v_target) + abs(s["vx"] - vx_desired)
 
-        # Desired horizontal velocity toward pad, proportional to offset.
-        vx_desired = float(np.clip(-0.05 * s["x"], -5.0, 5.0))
-
-        v_err = abs(s["vy"] - v_target) + 0.5 * abs(s["vx"] - vx_desired)
-
-        return -2.0 * dist - 2.0 * v_err - 5.0 * abs(s["angle"])
+        return -4.5 * x_term - 0.5 * y_term - 4.0 * v_err - 5.0 * abs(s["angle"])
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
