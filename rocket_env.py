@@ -1,25 +1,35 @@
 """
 2D Rocket Landing Environment with curriculum support.
 
-The env accepts a `stage` parameter (1-6) that controls difficulty.
-Stage is set externally by the CurriculumCallback in train_ppo.py.
+All stages use a 2D action space [throttle, gimbal_delta] from the start.
+Gimbal = clip(PD(angle, ang_vel) * pd_gain + agent_action, -1, 1)
+The PD inner loop keeps the rocket upright; the agent's action is a steering
+correction on top of it. pd_gain decreases across stages so the agent takes
+progressively more attitude authority.
 
 Stages
 ------
-  1  pad=40m  alt=200m  vy=-10  x=±30m   throttle-only  (current level)
-  2  pad=30m  alt=200m  vy=-10  x=±30m   throttle-only
-  3  pad=20m  alt=200m  vy=-10  x=±40m   throttle-only
-  4  pad=20m  alt=350m  vy=-15  x=±50m   throttle-only
-  5  pad=20m  alt=500m  vy=-20  x=±50m   throttle-only
-  6  pad=20m  alt=500m  vy=-20  x=±50m   throttle + gimbal (full problem)
+  1  pad=40m  alt=150m  vy=-5   x=+/-10m   pd_gain=1.0  (learn to fire)
+  2  pad=30m  alt=200m  vy=-10  x=+/-25m   pd_gain=1.0  (meaningful steering)
+  3  pad=20m  alt=250m  vy=-10  x=+/-40m   pd_gain=1.0  (pad < spawn, must divert)
+  4  pad=20m  alt=350m  vy=-15  x=+/-60m   pd_gain=0.7  (random vx + tilt at spawn)
+  5  pad=20m  alt=500m  vy=-20  x=+/-80m   pd_gain=0.5  (full divert problem)
+  6  pad=20m  alt=500m  vy=-20  x=+/-80m   pd_gain=0.3  (agent owns attitude)
+
+Reward
+------
+  Potential-based shaping (PBRS): r = gamma * Phi(s') - Phi(s)
+  Phi encodes: weighted distance to pad, speed-profile error, tilt.
+  PBRS is policy-invariant -- it cannot shift the optimal policy, only accelerate
+  learning. Terminals alone define success/failure objectives.
 
 Coordinate system
 -----------------
-  x     : horizontal position (metres), positive = right
-  y     : altitude (metres), positive = up
+  x     : horizontal position (m), positive = right
+  y     : altitude (m), positive = up
   vx    : horizontal velocity (m/s)
   vy    : vertical velocity (m/s), negative = falling
-  angle : rocket body tilt from vertical (radians), positive = tilted right
+  angle : body tilt from vertical (rad), positive = tilted right
 """
 
 import numpy as np
@@ -27,14 +37,16 @@ import gymnasium as gym
 from gymnasium import spaces
 
 
-# ── Physical constants (fixed across all stages) ──────────────────────────────
+# ---- Physical constants ------------------------------------------------------
 GRAVITY           = 9.81
-ROCKET_MASS       = 50.0        # kg dry
-FUEL_CAPACITY     = 60.0        # kg
-ENGINE_THRUST     = 1200.0      # N at full throttle
-FUEL_BURN_RATE    = 2.0         # kg/s at full throttle
+ROCKET_MASS       = 50.0
+FUEL_CAPACITY     = 60.0
+ENGINE_THRUST     = 1200.0
+FUEL_BURN_RATE    = 2.0
 
 MAX_GIMBAL_ANGLE  = np.radians(20)
+# 30 deg/s slew limit -> at DT=0.05: 1.5 deg/step -> 1.5/20 = 0.075 normalized
+MAX_GIMBAL_SLEW   = 0.075
 MOMENT_OF_INERTIA = 800.0
 GIMBAL_ARM        = 0.5
 ANGULAR_DAMPING   = 0.94
@@ -45,22 +57,26 @@ MAX_LANDING_VX    = 3.0
 DT                = 0.05
 MAX_STEPS         = 2000
 
-# ── Curriculum stage definitions ──────────────────────────────────────────────
-# Each entry: (pad_half, altitude, init_vy, x_range, gimbal_learned)
+# ---- Curriculum stages -------------------------------------------------------
+# pd_gain: weight of the PD stabiliser in the residual gimbal formula.
+# vx_range / angle_range: random initial horizontal velocity and tilt (stages 4+).
 STAGES = {
-    1: dict(pad=40.0, alt=200.0, vy=-10.0, x_range=30.0, gimbal=False),
-    2: dict(pad=30.0, alt=200.0, vy=-10.0, x_range=30.0, gimbal=False),
-    3: dict(pad=20.0, alt=200.0, vy=-10.0, x_range=40.0, gimbal=False),
-    4: dict(pad=20.0, alt=350.0, vy=-15.0, x_range=50.0, gimbal=False),
-    5: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=50.0, gimbal=False),
-    6: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=50.0, gimbal=True),
+    1: dict(pad=40.0, alt=150.0, vy=-5.0,  x_range=10.0, vx_range=0.0, angle_range=0.05, pd_gain=1.0),
+    2: dict(pad=30.0, alt=200.0, vy=-10.0, x_range=25.0, vx_range=0.0, angle_range=0.05, pd_gain=1.0),
+    3: dict(pad=20.0, alt=250.0, vy=-10.0, x_range=40.0, vx_range=0.0, angle_range=0.05, pd_gain=1.0),
+    # Stage 4: increase altitude and speed only — no random vx/angle yet, keep pd_gain high
+    4: dict(pad=20.0, alt=350.0, vy=-15.0, x_range=60.0, vx_range=0.0, angle_range=0.05, pd_gain=1.0),
+    # Stage 5: add random initial vx and angle, start reducing pd_gain
+    5: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.7),
+    # Stage 6: full problem — larger gimbal authority, agent mostly in charge
+    6: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.3),
 }
 MAX_STAGE = len(STAGES)
 
 
 class RocketLandingEnv(gym.Env):
     """
-    Observation space (8 values):
+    Observation (8 values):
         0  x        horizontal position  (m)
         1  y        altitude             (m)
         2  vx       horizontal velocity  (m/s)
@@ -70,9 +86,9 @@ class RocketLandingEnv(gym.Env):
         6  fuel     remaining fuel       (kg)
         7  throttle current throttle     (0-1)
 
-    Action space:
-        Stages 1-5: [throttle]          1D, gimbal auto-stabilised by PD
-        Stage 6:    [throttle, gimbal]  2D, agent controls both
+    Action (2 values, all stages):
+        0  throttle   [0, 1]
+        1  gimbal_cmd [-1, 1]  -- agent's steering correction; combined with PD
     """
 
     metadata = {"render_modes": ["human", "ansi"], "render_fps": 20}
@@ -83,33 +99,20 @@ class RocketLandingEnv(gym.Env):
         self.render_mode = render_mode
         self._state      = None
         self._steps      = 0
-        self._build_spaces()
+        self._phi_prev   = 0.0
 
-    def _build_spaces(self):
-        cfg = STAGES[self.stage]
+        self.action_space = spaces.Box(
+            low=np.array([0.0, -1.0], dtype=np.float32),
+            high=np.array([1.0,  1.0], dtype=np.float32),
+            dtype=np.float32,
+        )
 
-        if cfg["gimbal"]:
-            self.action_space = spaces.Box(
-                low=np.array([0.0, -1.0], dtype=np.float32),
-                high=np.array([1.0,  1.0], dtype=np.float32),
-                dtype=np.float32,
-            )
-        else:
-            self.action_space = spaces.Box(
-                low=np.float32(0.0),
-                high=np.float32(1.0),
-                shape=(1,),
-                dtype=np.float32,
-            )
-
-        obs_low  = np.array([-500, 0,   -50, -200, -np.pi, -5, 0,             0], dtype=np.float32)
-        obs_high = np.array([ 500, 1000, 50,   50,  np.pi,  5, FUEL_CAPACITY, 1], dtype=np.float32)
+        obs_low  = np.array([-500,    0, -50, -200, -np.pi, -5, 0,             0], dtype=np.float32)
+        obs_high = np.array([ 500, 1000,  50,   50,  np.pi,  5, FUEL_CAPACITY, 1], dtype=np.float32)
         self.observation_space = spaces.Box(obs_low, obs_high, dtype=np.float32)
 
     def set_stage(self, stage: int):
-        """Called by CurriculumCallback to advance difficulty."""
-        self.stage = stage
-        self._build_spaces()
+        self.stage = stage  # action space unchanged -- always 2D
 
     def _cfg(self):
         return STAGES[self.stage]
@@ -125,57 +128,90 @@ class RocketLandingEnv(gym.Env):
     def _total_mass(self):
         return ROCKET_MASS + self._state["fuel"]
 
+    def _phi(self):
+        """
+        Potential function for PBRS.
+        Encodes: weighted distance to pad-centre, speed-profile error, tilt.
+        Lower = worse; improving state -> positive shaping reward.
+        """
+        s   = self._state
+        cfg = self._cfg()
+
+        dist = np.sqrt(s["x"]**2 + (0.5 * s["y"])**2)
+
+        # Desired descent speed: slow near ground, fast at altitude (sqrt(y) profile).
+        # Kills hovering (vy~0 at altitude is penalised) and freefall
+        # (vy=-40 near ground is penalised). v_max cap keeps it physically reachable.
+        v_target = -min(5.0, 0.6 * np.sqrt(max(s["y"], 1.0)))
+
+        # Desired horizontal velocity toward pad, proportional to offset.
+        vx_desired = float(np.clip(-0.05 * s["x"], -5.0, 5.0))
+
+        v_err = abs(s["vy"] - v_target) + 0.5 * abs(s["vx"] - vx_desired)
+
+        return -2.0 * dist - 2.0 * v_err - 5.0 * abs(s["angle"])
+
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         cfg = self._cfg()
         rng = self.np_random
         self._state = {
-            "x":        float(rng.uniform(-cfg["x_range"], cfg["x_range"])),
-            "y":        cfg["alt"],
-            "vx":       float(rng.uniform(-3.0, 3.0)),
-            "vy":       cfg["vy"],
-            "angle":    float(rng.uniform(-0.1, 0.1)),
-            "ang_vel":  0.0,
-            "fuel":     FUEL_CAPACITY,
+            "x":       float(rng.uniform(-cfg["x_range"], cfg["x_range"])),
+            "y":       cfg["alt"],
+            "vx":      float(rng.uniform(-cfg["vx_range"], cfg["vx_range"])),
+            "vy":      cfg["vy"],
+            "angle":   float(rng.uniform(-cfg["angle_range"], cfg["angle_range"])),
+            "ang_vel": 0.0,
+            "fuel":    FUEL_CAPACITY,
             "throttle": 0.0,
-            "gimbal":   0.0,
+            "gimbal":  0.0,
         }
-        self._steps = 0
+        self._steps    = 0
+        self._phi_prev = self._phi()   # Phi(s0)
         return self._get_obs(), {}
 
     def step(self, action):
         cfg = self._cfg()
 
-        throttle = float(np.clip(action[0], 0.0, 1.0))
-
-        if cfg["gimbal"]:
-            # Agent controls gimbal directly
-            gimbal = float(np.clip(action[1], -1.0, 1.0))
-        else:
-            # PD auto-stabiliser keeps the rocket upright
-            gimbal = float(np.clip(
-                self._state["angle"] * 3.0 + self._state["ang_vel"] * 1.0,
-                -1.0, 1.0,
-            ))
+        throttle     = float(np.clip(action[0], 0.0, 1.0))
+        agent_gimbal = float(np.clip(action[1], -1.0, 1.0))
 
         if self._state["fuel"] <= 0.0:
             throttle = 0.0
+
+        # Residual gimbal: PD stabilises attitude, agent adds steering correction.
+        pd_val = float(np.clip(
+            self._state["angle"] * 3.0 + self._state["ang_vel"] * 1.0,
+            -1.0, 1.0,
+        ))
+        desired_gimbal = float(np.clip(
+            pd_val * cfg["pd_gain"] + agent_gimbal,
+            -1.0, 1.0,
+        ))
+
+        # Slew-rate limit: prevents bang-bang gimbal chattering at 20 Hz.
+        prev_gimbal = self._state["gimbal"]
+        gimbal = float(np.clip(
+            desired_gimbal,
+            prev_gimbal - MAX_GIMBAL_SLEW,
+            prev_gimbal + MAX_GIMBAL_SLEW,
+        ))
 
         self._state["throttle"] = throttle
         self._state["gimbal"]   = gimbal
         s = self._state
 
-        # ── Physics ───────────────────────────────────────────────────────────
-        mass          = self._total_mass()
-        nozzle_angle  = s["angle"] + gimbal * MAX_GIMBAL_ANGLE
-        thrust_force  = ENGINE_THRUST * throttle
+        # ---- Physics ---------------------------------------------------------
+        mass         = self._total_mass()
+        nozzle_angle = s["angle"] + gimbal * MAX_GIMBAL_ANGLE
+        thrust_force = ENGINE_THRUST * throttle
 
         ax = -thrust_force * np.sin(nozzle_angle) / mass - 0.02 * s["vx"]
         ay =  thrust_force * np.cos(nozzle_angle) / mass - GRAVITY
 
-        gimbal_defl  = gimbal * MAX_GIMBAL_ANGLE
-        torque       = -thrust_force * np.sin(gimbal_defl) * GIMBAL_ARM
-        ang_accel    = torque / MOMENT_OF_INERTIA
+        gimbal_defl = gimbal * MAX_GIMBAL_ANGLE
+        torque      = -thrust_force * np.sin(gimbal_defl) * GIMBAL_ARM
+        ang_accel   = torque / MOMENT_OF_INERTIA
 
         s["ang_vel"] = s["ang_vel"] * ANGULAR_DAMPING + ang_accel * DT
         s["angle"]  += s["ang_vel"] * DT
@@ -186,7 +222,7 @@ class RocketLandingEnv(gym.Env):
         s["fuel"]    = max(0.0, s["fuel"] - FUEL_BURN_RATE * throttle * DT)
         self._steps += 1
 
-        # ── Termination ───────────────────────────────────────────────────────
+        # ---- Termination -----------------------------------------------------
         terminated = False
         truncated  = False
         reward     = 0.0
@@ -207,9 +243,13 @@ class RocketLandingEnv(gym.Env):
             on_pad     = abs(s["x"]) <= cfg["pad"]
 
             if speed_ok and upright and on_pad:
-                reward = 200.0
+                # Graded landing bonus: encourages centring, soft touchdown, fuel efficiency.
+                centring_bonus = 20.0 * max(0.0, 1.0 - abs(s["x"]) / cfg["pad"])
+                speed_bonus    = 20.0 * max(0.0, 1.0 - abs(s["vy"]) / MAX_LANDING_VY)
+                fuel_bonus     = 0.5  * s["fuel"]
+                reward         = 200.0 + centring_bonus + speed_bonus + fuel_bonus
             elif speed_ok and upright:
-                reward = 80.0
+                reward = 0.0
             else:
                 reward = -200.0
 
@@ -222,13 +262,14 @@ class RocketLandingEnv(gym.Env):
             reward    = -50.0
 
         else:
-            # ── Shaping reward ────────────────────────────────────────────────
-            speed   = np.sqrt(s["vx"]**2 + s["vy"]**2)
-            reward -= 0.02 * speed
-            reward -= 0.01 * s["y"]
-            reward -= 0.05 * abs(s["x"])
-            reward -= 0.05 * abs(s["angle"])
-            reward -= 0.05 * throttle
+            # Potential-based shaping: r = Phi(s') - Phi(s)
+            # Using gamma=1 here so the sum telescopes exactly to Phi(s_T) - Phi(s_0),
+            # which is bounded by |Phi_max - Phi_min| regardless of episode length.
+            # The gamma<1 formula (gamma*Phi(s') - Phi(s)) pays (gamma-1)*Phi per step
+            # as a bonus, which compounds over long episodes and can dominate terminals.
+            phi_next       = self._phi()
+            reward         = phi_next - self._phi_prev
+            self._phi_prev = phi_next
 
         info = {
             "altitude":  s["y"],
