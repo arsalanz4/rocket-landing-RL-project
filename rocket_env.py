@@ -66,10 +66,10 @@ STAGES = {
     3: dict(pad=20.0, alt=250.0, vy=-10.0, x_range=40.0, vx_range=0.0, angle_range=0.05, pd_gain=1.0),
     # Stage 4: increase altitude and speed only — no random vx/angle yet, keep pd_gain high
     4: dict(pad=20.0, alt=350.0, vy=-15.0, x_range=60.0, vx_range=0.0, angle_range=0.05, pd_gain=1.0),
-    # Stage 5: add random initial vx and angle, start reducing pd_gain
-    5: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.7),
-    # Stage 6: full problem — larger gimbal authority, agent mostly in charge
-    6: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.3),
+    # Stages 5-7: 500m altitude requires more fuel — 20% extra (72 kg vs 60)
+    5: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.7, fuel=72.0),
+    6: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.5, fuel=72.0),
+    7: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=72.0),
 }
 MAX_STAGE = len(STAGES)
 
@@ -161,7 +161,7 @@ class RocketLandingEnv(gym.Env):
             "vy":      cfg["vy"],
             "angle":   float(rng.uniform(-cfg["angle_range"], cfg["angle_range"])),
             "ang_vel": 0.0,
-            "fuel":    FUEL_CAPACITY,
+            "fuel":    cfg.get("fuel", FUEL_CAPACITY),
             "throttle": 0.0,
             "gimbal":  0.0,
         }

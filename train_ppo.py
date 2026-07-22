@@ -46,6 +46,7 @@ ADVANCE_THRESHOLD = {
     4: 0.75,
     5: 0.70,
     6: 0.70,
+    7: 0.70,
 }
 EVAL_WINDOW               = 20
 EVAL_FREQ                 = 20_000
