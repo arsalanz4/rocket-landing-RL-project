@@ -69,7 +69,7 @@ STAGES = {
     # Stages 5-7: 500m altitude requires more fuel — 20% extra (72 kg vs 60)
     5: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.7, fuel=72.0),
     6: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.5, fuel=72.0),
-    7: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=72.0),
+    7: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=94.0),
 }
 MAX_STAGE = len(STAGES)
 
@@ -144,11 +144,19 @@ class RocketLandingEnv(gym.Env):
         x_term = abs(s["x"])
         y_term = s["y"]
 
-        v_target  = -min(5.0, 0.6 * np.sqrt(max(s["y"], 1.0)))
+        v_target  = -min(5.0, 0.3 * np.sqrt(max(s["y"], 1.0)))
         vx_desired = float(np.clip(-0.05 * s["x"], -15.0, 15.0))
         v_err = abs(s["vy"] - v_target) + abs(s["vx"] - vx_desired)
 
-        return -4.5 * x_term - 0.5 * y_term - 4.0 * v_err - 5.0 * abs(s["angle"])
+        # Below 100m, v_err weight ramps from 4.0 to 20.0 — braking in the final
+        # approach must feel 5x more urgent than at altitude. Smooth ramp avoids
+        # a discontinuity in Phi that would cause a shaping spike at 100m.
+        altitude_factor = 1.0 + 4.0 * max(0.0, 1.0 - s["y"] / 100.0)
+        v_err_weight    = 4.0 * altitude_factor
+
+        # Fuel term: burning 1 kg costs 0.5 shaping per step, encouraging conservation
+        # throughout the flight rather than only at landing (fuel_bonus terminal).
+        return -4.5 * x_term - 0.5 * y_term - v_err_weight * v_err - 5.0 * abs(s["angle"]) + 0.5 * s["fuel"]
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -250,7 +258,11 @@ class RocketLandingEnv(gym.Env):
             elif speed_ok and upright:
                 reward = 0.0
             else:
-                reward = -200.0
+                # Extra penalty scaled to how far vy exceeds the soft-landing threshold.
+                # vy=-10 -> -225, vy=-25 -> -300. Creates a gradient: crashing slowly
+                # is always better than crashing fast, even when landing is not achievable.
+                vy_excess = max(0.0, abs(s["vy"]) - MAX_LANDING_VY)
+                reward    = -200.0 - 5.0 * vy_excess
 
         elif s["fuel"] <= 0.0:
             terminated = True
