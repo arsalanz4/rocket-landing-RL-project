@@ -144,14 +144,17 @@ class RocketLandingEnv(gym.Env):
         x_term = abs(s["x"])
         y_term = s["y"]
 
-        v_target  = -min(5.0, 0.3 * np.sqrt(max(s["y"], 1.0)))
+        # coefficient=1.0 gives v_target=-3.16 m/s at y=10m (in -3 to -5 range),
+        # and caps at -5 m/s above y=25m.  Old coefficient=0.3 capped only at
+        # y=278m and gave -0.95 m/s at y=10m — unreachably strict for a 500m run.
+        v_target  = -min(5.0, 1.0 * np.sqrt(max(s["y"], 1.0)))
         vx_desired = float(np.clip(-0.05 * s["x"], -15.0, 15.0))
         v_err = abs(s["vy"] - v_target) + abs(s["vx"] - vx_desired)
 
-        # Below 100m, v_err weight ramps from 4.0 to 20.0 — braking in the final
-        # approach must feel 5x more urgent than at altitude. Smooth ramp avoids
-        # a discontinuity in Phi that would cause a shaping spike at 100m.
-        altitude_factor = 1.0 + 4.0 * max(0.0, 1.0 - s["y"] / 100.0)
+        # Ramp referenced to 150m so factor>=3x throughout the sub-100m zone.
+        # Old reference of 100m only reached 3x at y=50m; between y=50-100m the
+        # weight was sub-3x, leaving a weak braking signal at 100-50m.
+        altitude_factor = 1.0 + 8.0 * max(0.0, 1.0 - s["y"] / 150.0)
         v_err_weight    = 4.0 * altitude_factor
 
         # Fuel term: burning 1 kg costs 0.5 shaping per step, encouraging conservation
@@ -207,6 +210,8 @@ class RocketLandingEnv(gym.Env):
         self._state["throttle"] = throttle
         self._state["gimbal"]   = gimbal
         s = self._state
+
+        prev_vy = s["vy"]   # captured before physics for vy-improvement bonus
 
         # ---- Physics ---------------------------------------------------------
         mass         = self._total_mass()
@@ -281,6 +286,15 @@ class RocketLandingEnv(gym.Env):
             phi_next       = self._phi()
             reward         = phi_next - self._phi_prev
             self._phi_prev = phi_next
+
+            # Dense braking bonus: explicit reward for each step vy moves toward v_target.
+            # PBRS already encodes this via the v_err term in Phi, but the signal is mixed
+            # with x, angle, and fuel terms.  This additive term isolates the vertical
+            # braking gradient so it can't be masked by other components competing in Phi.
+            v_target_step   = -min(5.0, 1.0 * np.sqrt(max(s["y"], 1.0)))
+            vy_improvement  = abs(prev_vy - v_target_step) - abs(s["vy"] - v_target_step)
+            if vy_improvement > 0.0:
+                reward += 3.0 * vy_improvement
 
         info = {
             "altitude":  s["y"],
