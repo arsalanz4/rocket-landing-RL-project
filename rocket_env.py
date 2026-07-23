@@ -69,7 +69,12 @@ STAGES = {
     # Stages 5-7: 500m altitude requires more fuel — 20% extra (72 kg vs 60)
     5: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.7, fuel=72.0),
     6: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.5, fuel=72.0),
-    7: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=94.0),
+    # Stage 7 fuel restored to 72 kg (matches stages 5-6): at 94 kg the rocket has
+    # TWR=0.85 — full throttle still accelerates it downward for the first 11 s,
+    # making the braking physics qualitatively different from stages 5-6 and causing
+    # the transferred policy to give up on throttling.  At 72 kg TWR=1.002, same
+    # marginal-hover regime the stage-6 policy was trained on.
+    7: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=72.0),
 }
 MAX_STAGE = len(STAGES)
 
@@ -157,9 +162,11 @@ class RocketLandingEnv(gym.Env):
         altitude_factor = 1.0 + 8.0 * max(0.0, 1.0 - s["y"] / 150.0)
         v_err_weight    = 4.0 * altitude_factor
 
-        # Fuel term: burning 1 kg costs 0.5 shaping per step, encouraging conservation
-        # throughout the flight rather than only at landing (fuel_bonus terminal).
-        return -4.5 * x_term - 0.5 * y_term - v_err_weight * v_err - 5.0 * abs(s["angle"]) + 0.5 * s["fuel"]
+        # No per-step fuel conservation term: the terminal fuel_bonus (+0.5*fuel at
+        # landing) is sufficient incentive for efficiency.  The old +0.5*fuel/step
+        # penalised every kg burned and suppressed throttling in stage 7 where the
+        # agent must burn ~22 kg before gaining deceleration authority.
+        return -4.5 * x_term - 0.5 * y_term - v_err_weight * v_err - 5.0 * abs(s["angle"])
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -289,12 +296,21 @@ class RocketLandingEnv(gym.Env):
 
             # Dense braking bonus: explicit reward for each step vy moves toward v_target.
             # PBRS already encodes this via the v_err term in Phi, but the signal is mixed
-            # with x, angle, and fuel terms.  This additive term isolates the vertical
-            # braking gradient so it can't be masked by other components competing in Phi.
-            v_target_step   = -min(5.0, 1.0 * np.sqrt(max(s["y"], 1.0)))
-            vy_improvement  = abs(prev_vy - v_target_step) - abs(s["vy"] - v_target_step)
+            # with x and angle terms.  This additive term isolates the vertical braking
+            # gradient so it can't be masked by other Phi components.
+            v_target_step  = -min(5.0, 1.0 * np.sqrt(max(s["y"], 1.0)))
+            vy_improvement = abs(prev_vy - v_target_step) - abs(s["vy"] - v_target_step)
             if vy_improvement > 0.0:
                 reward += 3.0 * vy_improvement
+
+            # Direct vy speed reward: penalty proportional to how much vy exceeds
+            # v_target (too fast), 0 when on-target or slower.  This is a per-state
+            # penalty, not a delta, giving a constant gradient toward the speed profile.
+            # Note: formula uses abs(v_target_step) as denominator; user's original
+            # divides by v_target (negative), which inverts the sign and penalises
+            # slow descent instead of fast descent.
+            vy_ratio = (s["vy"] - v_target_step) / abs(v_target_step)
+            reward  += 2.0 * float(np.clip(vy_ratio, -1.0, 0.0))
 
         info = {
             "altitude":  s["y"],

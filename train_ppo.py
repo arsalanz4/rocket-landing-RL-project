@@ -230,7 +230,7 @@ def build_model(train_env: VecNormalize, stage: int) -> PPO:
         gamma=0.99,
         gae_lambda=0.95,
         clip_range=0.2,
-        ent_coef=0.02,    # slightly higher: 2D action space needs more initial exploration
+        ent_coef=0.05,    # raised 0.02→0.05 to help policy re-explore braking in stage 7
         vf_coef=0.5,
         max_grad_norm=0.5,
         target_kl=0.03,
