@@ -312,6 +312,13 @@ class RocketLandingEnv(gym.Env):
             vy_ratio = (s["vy"] - v_target_step) / abs(v_target_step)
             reward  += 2.0 * float(np.clip(vy_ratio, -1.0, 0.0))
 
+            # On-speed bonus: positive reward when vy is within 20% of v_target.
+            # The penalty above pushes away from overspeeding; this pulls toward the
+            # target speed profile with a positive signal so the agent actively seeks
+            # the zone rather than just avoiding the penalty zone boundary.
+            if abs(s["vy"] - v_target_step) <= 0.2 * abs(v_target_step):
+                reward += 2.0
+
         info = {
             "altitude":  s["y"],
             "vy":        s["vy"],
