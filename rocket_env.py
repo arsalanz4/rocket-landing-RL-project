@@ -41,6 +41,8 @@ from gymnasium import spaces
 GRAVITY           = 9.81
 ROCKET_MASS       = 50.0
 FUEL_CAPACITY     = 60.0
+MAX_FUEL          = 120.0   # obs-space upper bound; stages 8-11 can carry more than 60 kg
+MAX_WIND          = 20.0    # obs-space upper bound for wind_x (m/s²)
 ENGINE_THRUST     = 1200.0
 FUEL_BURN_RATE    = 2.0
 
@@ -74,22 +76,31 @@ STAGES = {
     # making the braking physics qualitatively different from stages 5-6 and causing
     # the transferred policy to give up on throttling.  At 72 kg TWR=1.002, same
     # marginal-hover regime the stage-6 policy was trained on.
-    7: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=72.0),
+    7: dict(pad=20.0, alt=500.0,  vy=-20.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=72.0),
+    # Stages 8-11: introduce horizontal wind gusts (wind_mag = peak acceleration m/s²).
+    # Gusts are random bursts: 0.5-1 s on, 2-3 s off.  wind_x is added to obs so the
+    # agent can react; the renderer draws a live arrow at the top of the screen.
+    # Extra fuel compensates for the lateral corrections wind forces require.
+    8:  dict(pad=20.0, alt=500.0,  vy=-20.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=72.0,  wind_mag=5.0),
+    9:  dict(pad=10.0, alt=500.0,  vy=-20.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=80.0,  wind_mag=10.0),
+    10: dict(pad=10.0, alt=750.0,  vy=-20.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=90.0,  wind_mag=15.0),
+    11: dict(pad=5.0,  alt=1000.0, vy=-20.0, x_range=100.0, vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=110.0, wind_mag=20.0),
 }
 MAX_STAGE = len(STAGES)
 
 
 class RocketLandingEnv(gym.Env):
     """
-    Observation (8 values):
-        0  x        horizontal position  (m)
-        1  y        altitude             (m)
-        2  vx       horizontal velocity  (m/s)
-        3  vy       vertical velocity    (m/s)
-        4  angle    body tilt            (rad)
-        5  ang_vel  angular velocity     (rad/s)
-        6  fuel     remaining fuel       (kg)
-        7  throttle current throttle     (0-1)
+    Observation (9 values):
+        0  x         horizontal position   (m)
+        1  y         altitude              (m)
+        2  vx        horizontal velocity   (m/s)
+        3  vy        vertical velocity     (m/s)
+        4  angle     body tilt             (rad)
+        5  ang_vel   angular velocity      (rad/s)
+        6  fuel      remaining fuel        (kg)
+        7  throttle  current throttle      (0-1)
+        8  wind_x    wind acceleration     (m/s²)  -- 0 for stages 1-7
 
     Action (2 values, all stages):
         0  throttle   [0, 1]
@@ -112,8 +123,8 @@ class RocketLandingEnv(gym.Env):
             dtype=np.float32,
         )
 
-        obs_low  = np.array([-500,    0, -50, -200, -np.pi, -5, 0,             0], dtype=np.float32)
-        obs_high = np.array([ 500, 1000,  50,   50,  np.pi,  5, FUEL_CAPACITY, 1], dtype=np.float32)
+        obs_low  = np.array([-500,    0, -50, -200, -np.pi, -5, 0,        0, -MAX_WIND], dtype=np.float32)
+        obs_high = np.array([ 500, 1200,  50,   50,  np.pi,  5, MAX_FUEL, 1,  MAX_WIND], dtype=np.float32)
         self.observation_space = spaces.Box(obs_low, obs_high, dtype=np.float32)
 
     def set_stage(self, stage: int):
@@ -126,7 +137,7 @@ class RocketLandingEnv(gym.Env):
         s = self._state
         return np.array(
             [s["x"], s["y"], s["vx"], s["vy"],
-             s["angle"], s["ang_vel"], s["fuel"], s["throttle"]],
+             s["angle"], s["ang_vel"], s["fuel"], s["throttle"], s["wind_force"]],
             dtype=np.float32,
         )
 
@@ -173,15 +184,19 @@ class RocketLandingEnv(gym.Env):
         cfg = self._cfg()
         rng = self.np_random
         self._state = {
-            "x":       float(rng.uniform(-cfg["x_range"], cfg["x_range"])),
-            "y":       cfg["alt"],
-            "vx":      float(rng.uniform(-cfg["vx_range"], cfg["vx_range"])),
-            "vy":      cfg["vy"],
-            "angle":   float(rng.uniform(-cfg["angle_range"], cfg["angle_range"])),
-            "ang_vel": 0.0,
-            "fuel":    cfg.get("fuel", FUEL_CAPACITY),
-            "throttle": 0.0,
-            "gimbal":  0.0,
+            "x":           float(rng.uniform(-cfg["x_range"], cfg["x_range"])),
+            "y":           cfg["alt"],
+            "vx":          float(rng.uniform(-cfg["vx_range"], cfg["vx_range"])),
+            "vy":          cfg["vy"],
+            "angle":       float(rng.uniform(-cfg["angle_range"], cfg["angle_range"])),
+            "ang_vel":     0.0,
+            "fuel":        cfg.get("fuel", FUEL_CAPACITY),
+            "throttle":    0.0,
+            "gimbal":      0.0,
+            # Wind state (zero for stages without wind_mag key)
+            "wind_force":  0.0,   # current horizontal wind acceleration (m/s²)
+            "wind_active": False, # True while a gust is in progress
+            "wind_timer":  int(rng.uniform(40, 61)),  # steps until first gust (2-3 s)
         }
         self._steps    = 0
         self._phi_prev = self._phi()   # Phi(s0)
@@ -220,12 +235,28 @@ class RocketLandingEnv(gym.Env):
 
         prev_vy = s["vy"]   # captured before physics for vy-improvement bonus
 
+        # ---- Wind gust update ------------------------------------------------
+        wind_mag = cfg.get("wind_mag", 0.0)
+        if wind_mag > 0.0:
+            s["wind_timer"] -= 1
+            if s["wind_timer"] <= 0:
+                if s["wind_active"]:
+                    # Gust ends; wait 2-3 s (40-60 steps) before the next one
+                    s["wind_force"]  = 0.0
+                    s["wind_active"] = False
+                    s["wind_timer"]  = int(self.np_random.uniform(40, 61))
+                else:
+                    # New gust: random direction and magnitude, lasts 0.5-1 s
+                    s["wind_force"]  = float(self.np_random.uniform(-wind_mag, wind_mag))
+                    s["wind_active"] = True
+                    s["wind_timer"]  = int(self.np_random.uniform(10, 21))
+
         # ---- Physics ---------------------------------------------------------
         mass         = self._total_mass()
         nozzle_angle = s["angle"] + gimbal * MAX_GIMBAL_ANGLE
         thrust_force = ENGINE_THRUST * throttle
 
-        ax = -thrust_force * np.sin(nozzle_angle) / mass - 0.02 * s["vx"]
+        ax = -thrust_force * np.sin(nozzle_angle) / mass - 0.02 * s["vx"] + s["wind_force"]
         ay =  thrust_force * np.cos(nozzle_angle) / mass - GRAVITY
 
         gimbal_defl = gimbal * MAX_GIMBAL_ANGLE
@@ -320,13 +351,14 @@ class RocketLandingEnv(gym.Env):
                 reward += 2.0
 
         info = {
-            "altitude":  s["y"],
-            "vy":        s["vy"],
-            "vx":        s["vx"],
-            "angle_deg": np.degrees(s["angle"]),
-            "fuel_left": s["fuel"],
-            "on_pad":    abs(s["x"]) <= cfg["pad"],
-            "stage":     self.stage,
+            "altitude":   s["y"],
+            "vy":         s["vy"],
+            "vx":         s["vx"],
+            "angle_deg":  np.degrees(s["angle"]),
+            "fuel_left":  s["fuel"],
+            "on_pad":     abs(s["x"]) <= cfg["pad"],
+            "stage":      self.stage,
+            "wind_force": s["wind_force"],
         }
 
         if self.render_mode == "human":
@@ -340,10 +372,11 @@ class RocketLandingEnv(gym.Env):
         thr = "#" * int(s["throttle"] * bar) + "." * (bar - int(s["throttle"] * bar))
         fp  = s["fuel"] / FUEL_CAPACITY
         fu  = "#" * int(fp * bar) + "." * (bar - int(fp * bar))
+        wind_str = f"  wind={s['wind_force']:+5.1f}" if s.get("wind_force", 0.0) != 0.0 else ""
         print(
             f"\r  [stage {self.stage}]  alt={s['y']:6.1f}m  "
             f"x={s['x']:+6.1f}m  vy={s['vy']:+6.1f}  "
             f"angle={np.degrees(s['angle']):+5.1f}deg  "
-            f"thr=[{thr}]  fuel=[{fu}] {s['fuel']:4.1f}kg",
+            f"thr=[{thr}]  fuel=[{fu}] {s['fuel']:4.1f}kg{wind_str}",
             end="", flush=True,
         )

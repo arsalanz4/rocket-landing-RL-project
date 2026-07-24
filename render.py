@@ -26,19 +26,14 @@ sys.path.insert(0, os.path.dirname(__file__))
 from rocket_env import (
     RocketLandingEnv, FUEL_CAPACITY, STAGES,
     MAX_LANDING_VY, MAX_LANDING_VX,
-    MAX_GIMBAL_ANGLE, MAX_TILT,
+    MAX_GIMBAL_ANGLE, MAX_TILT, MAX_WIND,
 )
-
-# Load stage-1 config for display scaling (renderer uses stage from the env)
-_s1 = STAGES[1]
-INIT_ALTITUDE    = _s1["alt"]
-LANDING_PAD_HALF = _s1["pad"]
 
 # ── Display constants ─────────────────────────────────────────────────────────
 W, H          = 900, 700        # window size in pixels
 FPS_DEFAULT   = 30              # target framerate
 WORLD_WIDTH   = 300.0           # metres shown horizontally (±150 m)
-WORLD_HEIGHT  = INIT_ALTITUDE * 1.05  # metres shown vertically
+WORLD_HEIGHT  = STAGES[1]["alt"] * 1.05   # set dynamically in run(); default = stage 1
 
 # Colours (R, G, B)
 SKY_TOP       = (10,  10,  40)
@@ -52,6 +47,7 @@ TEXT_COL      = (230, 230, 230)
 HUD_BG        = (0,   0,   0,  160)
 CRASH_COL     = (255,  60,  20)
 LAND_COL      = (80,  220,  80)
+WIND_COL      = (80,  200, 255)   # cyan for wind indicator
 
 
 # ── Coordinate helpers ────────────────────────────────────────────────────────
@@ -173,6 +169,9 @@ def draw_altitude_line(surf, font, altitude):
 
 def draw_hud(surf, font_lg, font_sm, state, step, episode, outcome=None):
     """Heads-up display: telemetry panel in the top-left corner."""
+    wind_f = state.get("wind_force", 0.0)
+    wind_a = state.get("wind_active", False)
+    wind_tag = " GUST" if wind_a else "     "
     lines = [
         f"Episode  {episode}",
         f"Step     {step}",
@@ -182,19 +181,22 @@ def draw_hud(surf, font_lg, font_sm, state, step, episode, outcome=None):
         f"Vel Y  {state['vy']:+7.1f} m/s",
         f"Angle  {np.degrees(state['angle']):+7.1f} deg",
         f"AngVel {state['ang_vel']:+7.2f} r/s",
-        f"Fuel   {state['fuel']:7.1f} kg  ({100*state['fuel']/FUEL_CAPACITY:.0f}%)",
+        f"Fuel   {state['fuel']:7.1f} kg",
         f"Throttle {state['throttle']*100:5.1f}%",
         f"Gimbal   {state['gimbal']*100:+5.1f}%",
+        f"Wind  {wind_f:+7.1f} m/s²{wind_tag}",
     ]
 
     # Background panel
-    panel_w, panel_h = 230, len(lines) * 20 + 16
+    panel_w, panel_h = 240, len(lines) * 20 + 16
     panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
     panel.fill(HUD_BG)
     surf.blit(panel, (8, 8))
 
+    wind_line_idx = len(lines) - 1   # last line is wind
     for i, line in enumerate(lines):
-        label = font_sm.render(line, True, TEXT_COL)
+        col = WIND_COL if (i == wind_line_idx and state.get("wind_active", False)) else TEXT_COL
+        label = font_sm.render(line, True, col)
         surf.blit(label, (16, 16 + i * 20))
 
     # Big outcome banner
@@ -224,6 +226,54 @@ def draw_throttle_bar(surf, font_sm, throttle):
     surf.blit(label, (bx - 2, by + bh + 6))
 
 
+def draw_wind_indicator(surf, font_sm, wind_force, wind_active):
+    """
+    Horizontal wind bar centred at the top of the screen.
+    The bar extends left/right proportional to wind magnitude.
+    Cyan = active gust; dim blue = no wind.
+    """
+    cx, cy   = W // 2, 22
+    max_px   = 90       # full-bar pixel half-width at MAX_WIND
+    bar_half = 100      # background bar half-width
+
+    # Background track
+    pygame.draw.rect(surf, (30, 30, 50),
+                     (cx - bar_half, cy - 4, bar_half * 2, 8), border_radius=4)
+    # Centre tick
+    pygame.draw.line(surf, (80, 80, 110), (cx, cy - 8), (cx, cy + 8), 1)
+
+    fill_px = int(wind_force / MAX_WIND * max_px)
+    if abs(fill_px) >= 1:
+        col = WIND_COL if wind_active else (50, 120, 180)
+        if fill_px > 0:
+            pygame.draw.rect(surf, col, (cx, cy - 4, fill_px, 8), border_radius=4)
+            # Arrowhead pointing right
+            pygame.draw.polygon(surf, col, [
+                (cx + fill_px + 9, cy),
+                (cx + fill_px,     cy - 6),
+                (cx + fill_px,     cy + 6),
+            ])
+        else:
+            pygame.draw.rect(surf, col, (cx + fill_px, cy - 4, -fill_px, 8), border_radius=4)
+            # Arrowhead pointing left
+            pygame.draw.polygon(surf, col, [
+                (cx + fill_px - 9, cy),
+                (cx + fill_px,     cy - 6),
+                (cx + fill_px,     cy + 6),
+            ])
+
+    if abs(wind_force) > 0.05:
+        gust_str  = "GUST " if wind_active else ""
+        label_str = f"{gust_str}WIND {wind_force:+.1f} m/s²"
+        col       = WIND_COL if wind_active else (80, 130, 190)
+    else:
+        label_str = "no wind"
+        col       = (60, 60, 90)
+
+    label = font_sm.render(label_str, True, col)
+    surf.blit(label, (cx - label.get_width() // 2, cy + 12))
+
+
 # ── Pilots ────────────────────────────────────────────────────────────────────
 
 def heuristic_action(obs):
@@ -234,7 +284,18 @@ def heuristic_action(obs):
     return np.array([throttle, gimbal], dtype=np.float32)
 
 
-def load_ppo_agent():
+def read_current_stage() -> int:
+    """Read the stage that training last saved to current_stage.txt."""
+    stage_file = "rocket/current_stage.txt"
+    if os.path.exists(stage_file):
+        with open(stage_file, encoding="utf-8-sig") as f:
+            content = f.read().strip()
+            if content:
+                return int(content)
+    return 1
+
+
+def load_ppo_agent(stage: int = 1):
     from stable_baselines3 import PPO
     from stable_baselines3.common.env_util import make_vec_env
     from stable_baselines3.common.vec_env import VecNormalize
@@ -247,9 +308,9 @@ def load_ppo_agent():
         print("Run: python rocket/train_ppo.py")
         sys.exit(1)
 
-    vec_env = make_vec_env(lambda: RocketLandingEnv(), n_envs=1)
+    vec_env = make_vec_env(lambda: RocketLandingEnv(stage=stage), n_envs=1)
     vec_env = VecNormalize.load(norm_path, vec_env)
-    vec_env.training   = False
+    vec_env.training    = False
     vec_env.norm_reward = False
 
     model = PPO.load(model_path, env=vec_env)
@@ -258,10 +319,13 @@ def load_ppo_agent():
 
 # ── Main render loop ──────────────────────────────────────────────────────────
 
-def run(mode: str):
+def run(mode: str, stage: int = 1):
+    global WORLD_HEIGHT
+    WORLD_HEIGHT = STAGES[stage]["alt"] * 1.1   # scale viewport to current stage altitude
+
     pygame.init()
     screen = pygame.display.set_mode((W, H))
-    pygame.display.set_caption("Rocket Landing")
+    pygame.display.set_caption(f"Rocket Landing  [stage {stage}]")
     clock  = pygame.time.Clock()
 
     font_lg = pygame.font.SysFont("consolas", 52, bold=True)
@@ -278,9 +342,9 @@ def run(mode: str):
     # Set up agent
     ppo_model, ppo_vec_env = None, None
     if mode == "ppo":
-        ppo_model, ppo_vec_env = load_ppo_agent()
+        ppo_model, ppo_vec_env = load_ppo_agent(stage=stage)
 
-    env     = RocketLandingEnv()
+    env     = RocketLandingEnv(stage=stage)
     obs, _  = env.reset()
     ppo_obs = ppo_vec_env.reset() if ppo_model else None
 
@@ -389,6 +453,9 @@ def run(mode: str):
         draw_rocket(screen, sx, sy, env._state["throttle"],
                     angle_rad=env._state["angle"], gimbal=env._state["gimbal"])
         draw_throttle_bar(screen, font_sm, env._state["throttle"])
+        draw_wind_indicator(screen, font_sm,
+                            env._state.get("wind_force", 0.0),
+                            env._state.get("wind_active", False))
         draw_hud(screen, font_lg, font_sm, env._state, step, episode,
                  outcome=outcome if done else None)
 
@@ -415,11 +482,15 @@ if __name__ == "__main__":
     group  = parser.add_mutually_exclusive_group()
     group.add_argument("--heuristic", action="store_true", help="run the hand-coded pilot")
     group.add_argument("--human",     action="store_true", help="control throttle yourself (SPACE)")
+    parser.add_argument("--stage", type=int, default=None,
+                        help="curriculum stage to render (default: read from current_stage.txt)")
     args = parser.parse_args()
 
+    render_stage = args.stage if args.stage is not None else read_current_stage()
+
     if args.heuristic:
-        run("heuristic")
+        run("heuristic", stage=render_stage)
     elif args.human:
-        run("human")
+        run("human", stage=render_stage)
     else:
-        run("ppo")
+        run("ppo", stage=render_stage)

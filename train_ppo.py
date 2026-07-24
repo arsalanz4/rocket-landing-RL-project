@@ -40,13 +40,9 @@ os.makedirs(LOG_DIR,  exist_ok=True)
 
 # ---- Curriculum settings -----------------------------------------------------
 ADVANCE_THRESHOLD = {
-    1: 0.80,
-    2: 0.80,
-    3: 0.75,
-    4: 0.75,
-    5: 0.70,
-    6: 0.70,
-    7: 0.70,
+    1: 0.80, 2: 0.80, 3: 0.75, 4: 0.75,
+    5: 0.70, 6: 0.70, 7: 0.70,
+    8: 0.80, 9: 0.75, 10: 0.70, 11: 0.65,
 }
 EVAL_WINDOW               = 20
 EVAL_FREQ                 = 20_000
@@ -346,9 +342,10 @@ def evaluate(n_episodes: int = 10):
             outcome = "CRASH"
 
         vx = info.get("vx", 0.0)
-        x_final = raw_env._state["x"]
+        x_final  = raw_env._state["x"]
+        wind_str = f"  wind={info.get('wind_force', 0.0):+.1f}" if info.get("wind_force", 0.0) != 0.0 else ""
         print(f"  Episode {ep+1:2d}: {outcome:>14s}  |  reward {total_r:+8.1f}  "
-              f"|  vy={vy:+5.1f}  vx={vx:+5.1f}  x={x_final:+6.1f}m  fuel left={fuel:.1f}kg")
+              f"|  vy={vy:+5.1f}  vx={vx:+5.1f}  x={x_final:+6.1f}m  fuel left={fuel:.1f}kg{wind_str}")
 
     raw_env.close()
     print(f"\nSuccess rate: {landings}/{n_episodes} ({100*landings/n_episodes:.0f}%)")
