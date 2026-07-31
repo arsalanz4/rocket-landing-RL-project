@@ -54,6 +54,12 @@ N_ENVS                    = 4    # CPU: fewer envs → smaller batches fit in ca
 REQUIRED_CONSECUTIVE_PASSES = 3
 SPRINT_STAGES = {1, 2, 3, 4, 5, 6}  # advance after 1 pass, not 3
 
+# How often to overwrite best_model.zip/vec_normalize.pkl during training (not
+# just at the end of a full --steps run). These two files are the only ones
+# meant to be pushed to git for cross-machine handoff — keeping them current
+# means you can stop mid-run, push, and resume from the same point elsewhere.
+SYNC_SAVE_FREQ = 50_000
+
 
 # ---- Stage helpers -----------------------------------------------------------
 
@@ -220,6 +226,30 @@ class CurriculumCallback(BaseCallback):
         return True
 
 
+class SyncSaveCallback(BaseCallback):
+    """Periodically overwrites best_model.zip/vec_normalize.pkl mid-run, so
+    the current state is always ready to push to git for cross-machine
+    handoff -- not just when a full --steps run finishes uninterrupted.
+
+    Reads curriculum_cb.train_env dynamically on every save (rather than
+    capturing it once at construction) because CurriculumCallback replaces
+    train_env with a new object on every stage advance.
+    """
+
+    def __init__(self, curriculum_cb: "CurriculumCallback", save_freq: int):
+        super().__init__()
+        self.curriculum_cb = curriculum_cb
+        self.save_freq      = save_freq
+        self._next_save      = save_freq
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps >= self._next_save:
+            self._next_save += self.save_freq
+            self.model.save(BEST_MODEL)
+            self.curriculum_cb.train_env.save(NORM_STATS)
+        return True
+
+
 # ---- PPO builder -------------------------------------------------------------
 
 def build_model(train_env: VecNormalize, stage: int) -> PPO:
@@ -287,12 +317,14 @@ def train(total_steps: int):
         name_prefix="ppo_rocket",
     )
 
+    sync_cb = SyncSaveCallback(curriculum_cb, save_freq=SYNC_SAVE_FREQ)
+
     print(f"Training for {total_steps:,} steps  |  current stage: {stage}")
     print(f"TensorBoard: tensorboard --logdir {LOG_DIR}\n")
 
     model.learn(
         total_timesteps=total_steps,
-        callback=[curriculum_cb, checkpoint_cb],
+        callback=[curriculum_cb, checkpoint_cb, sync_cb],
         reset_num_timesteps=False,
         tb_log_name="PPO_curriculum",
     )
