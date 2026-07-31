@@ -40,14 +40,19 @@ os.makedirs(LOG_DIR,  exist_ok=True)
 
 # ---- Curriculum settings -----------------------------------------------------
 ADVANCE_THRESHOLD = {
-    1: 0.80, 2: 0.80, 3: 0.75, 4: 0.75,
-    5: 0.70, 6: 0.70, 7: 0.70,
+    # Stages 1-6: lowered to sprint through known-solvable curriculum after retrain.
+    # Stage 7+ restored to original thresholds — these are where real learning happens.
+    1: 0.65, 2: 0.65, 3: 0.60, 4: 0.60,
+    5: 0.60, 6: 0.60, 7: 0.70,
     8: 0.80, 9: 0.75, 10: 0.70, 11: 0.65,
 }
 EVAL_WINDOW               = 20
 EVAL_FREQ                 = 20_000
 N_ENVS                    = 4    # CPU: fewer envs → smaller batches fit in cache better
+# Stages 1-6: only 1 consecutive pass needed to advance; stage 7+ keep 3.
+# Override in _on_step via SPRINT_STAGES constant below.
 REQUIRED_CONSECUTIVE_PASSES = 3
+SPRINT_STAGES = {1, 2, 3, 4, 5, 6}  # advance after 1 pass, not 3
 
 
 # ---- Stage helpers -----------------------------------------------------------
@@ -195,17 +200,20 @@ class CurriculumCallback(BaseCallback):
         success_rate = self._run_eval()
 
         threshold = ADVANCE_THRESHOLD[self.stage]
+        required = 1 if self.stage in SPRINT_STAGES else REQUIRED_CONSECUTIVE_PASSES
+
         if success_rate >= threshold:
             self._consecutive_passes += 1
         else:
             self._consecutive_passes = 0
 
-        print(f"\n  step {self.num_timesteps:>8,}  |  stage {self.stage}  "
+        sprint_tag = " [SPRINT]" if self.stage in SPRINT_STAGES else ""
+        print(f"\n  step {self.num_timesteps:>8,}  |  stage {self.stage}{sprint_tag}  "
               f"|  success {success_rate*100:.0f}%  "
               f"(need {threshold*100:.0f}%, "
-              f"{self._consecutive_passes}/{REQUIRED_CONSECUTIVE_PASSES} consecutive)")
+              f"{self._consecutive_passes}/{required} consecutive)")
 
-        if self._consecutive_passes >= REQUIRED_CONSECUTIVE_PASSES and self.stage < MAX_STAGE:
+        if self._consecutive_passes >= required and self.stage < MAX_STAGE:
             self._consecutive_passes = 0
             self._advance_stage()
 
