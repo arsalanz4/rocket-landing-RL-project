@@ -46,7 +46,7 @@ ADVANCE_THRESHOLD = {
 }
 EVAL_WINDOW               = 20
 EVAL_FREQ                 = 20_000
-N_ENVS                    = 8
+N_ENVS                    = 4    # CPU: fewer envs → smaller batches fit in cache better
 REQUIRED_CONSECUTIVE_PASSES = 3
 
 
@@ -220,9 +220,10 @@ def build_model(train_env: VecNormalize, stage: int) -> PPO:
         env=train_env,
         policy_kwargs=dict(net_arch=[128, 128], activation_fn=__import__("torch").nn.Tanh),
         learning_rate=3e-4,
-        n_steps=2048,
-        batch_size=256,
+        n_steps=512,        # CPU: rollout = N_ENVS * n_steps = 4*512 = 2048 samples
+        batch_size=128,     # CPU: fits comfortably in L2/L3 cache
         n_epochs=10,
+        device="cpu",
         gamma=0.99,
         gae_lambda=0.95,
         clip_range=0.2,
