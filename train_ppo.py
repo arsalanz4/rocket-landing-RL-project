@@ -43,9 +43,11 @@ os.makedirs(LOG_DIR,  exist_ok=True)
 ADVANCE_THRESHOLD = {
     # Stages 1-6: lowered to sprint through known-solvable curriculum after retrain.
     # Stage 7+ restored to original thresholds — these are where real learning happens.
+    # Stage 8 (new, transitional "8a"): pd_gain=0.3 handoff isolated from wind,
+    # vy=-15. Stages 9-12 are the old 8-11 renumbered (wind stages).
     1: 0.65, 2: 0.65, 3: 0.60, 4: 0.60,
     5: 0.60, 6: 0.60, 7: 0.70,
-    8: 0.80, 9: 0.75, 10: 0.70, 11: 0.65,
+    8: 0.80, 9: 0.80, 10: 0.75, 11: 0.70, 12: 0.65,
 }
 EVAL_WINDOW               = 20
 EVAL_FREQ                 = 20_000
