@@ -21,6 +21,7 @@ import os
 import re
 
 import numpy as np
+import torch
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.env_util import make_vec_env
@@ -59,6 +60,18 @@ SPRINT_STAGES = {1, 2, 3, 4, 5, 6}  # advance after 1 pass, not 3
 # meant to be pushed to git for cross-machine handoff — keeping them current
 # means you can stop mid-run, push, and resume from the same point elsewhere.
 SYNC_SAVE_FREQ = 50_000
+
+# Hard bounds on the Gaussian policy's log_std parameter. PPO's clip_range
+# bounds how much the policy RATIO can change per update, but nothing bounds
+# the absolute value of log_std itself -- it can drift unboundedly over many
+# small updates without ever tripping that clip. ent_coef alone isn't a
+# reliable guard (a run under ent_coef=0.02 still grew action_std from ~1.0
+# at step 50k to ~2.3e13 by step 10.4M, fully collapsing training long before
+# the numbers got that extreme). Clamping directly is the standard fix.
+# Range [-2.0, 1.0] -> action_std in [~0.135, ~2.72], ample for a [0,1]/[-1,1]
+# bounded action space without ever reaching a damaging magnitude.
+LOG_STD_MIN = -2.0
+LOG_STD_MAX = 1.0
 
 
 # ---- Stage helpers -----------------------------------------------------------
@@ -250,13 +263,25 @@ class SyncSaveCallback(BaseCallback):
         return True
 
 
+class LogStdClampCallback(BaseCallback):
+    """Clamps the policy's log_std parameter to [LOG_STD_MIN, LOG_STD_MAX]
+    every step, as a hard guard against unbounded action-variance growth --
+    see the comment above those constants for why ent_coef tuning alone
+    isn't sufficient."""
+
+    def _on_step(self) -> bool:
+        with torch.no_grad():
+            self.model.policy.log_std.data.clamp_(LOG_STD_MIN, LOG_STD_MAX)
+        return True
+
+
 # ---- PPO builder -------------------------------------------------------------
 
 def build_model(train_env: VecNormalize, stage: int) -> PPO:
     return PPO(
         policy="MlpPolicy",
         env=train_env,
-        policy_kwargs=dict(net_arch=[128, 128], activation_fn=__import__("torch").nn.Tanh),
+        policy_kwargs=dict(net_arch=[128, 128], activation_fn=torch.nn.Tanh),
         learning_rate=3e-4,
         n_steps=512,        # CPU: rollout = N_ENVS * n_steps = 4*512 = 2048 samples
         batch_size=128,     # CPU: fits comfortably in L2/L3 cache
@@ -317,14 +342,21 @@ def train(total_steps: int):
         name_prefix="ppo_rocket",
     )
 
-    sync_cb = SyncSaveCallback(curriculum_cb, save_freq=SYNC_SAVE_FREQ)
+    sync_cb    = SyncSaveCallback(curriculum_cb, save_freq=SYNC_SAVE_FREQ)
+    logstd_cb  = LogStdClampCallback()
+
+    # Clamp immediately on resume too, in case the loaded checkpoint's
+    # log_std is already out of range (as it will be when recovering from
+    # a prior runaway-std run).
+    with torch.no_grad():
+        model.policy.log_std.data.clamp_(LOG_STD_MIN, LOG_STD_MAX)
 
     print(f"Training for {total_steps:,} steps  |  current stage: {stage}")
     print(f"TensorBoard: tensorboard --logdir {LOG_DIR}\n")
 
     model.learn(
         total_timesteps=total_steps,
-        callback=[curriculum_cb, checkpoint_cb, sync_cb],
+        callback=[curriculum_cb, checkpoint_cb, sync_cb, logstd_cb],
         reset_num_timesteps=False,
         tb_log_name="PPO_curriculum",
     )
