@@ -192,7 +192,11 @@ class RocketLandingEnv(gym.Env):
         # landing) is sufficient incentive for efficiency.  The old +0.5*fuel/step
         # penalised every kg burned and suppressed throttling in stage 7 where the
         # agent must burn ~22 kg before gaining deceleration authority.
-        return -4.5 * x_term - 0.5 * y_term - v_err_weight * v_err - 5.0 * abs(s["angle"])
+        # x_term weight raised 4.5->6.0->8.0 to strengthen horizontal position
+        # signal relative to vy's three dense per-step bonus channels (see
+        # step()). 6.0 wasn't enough gradient to escape the x=-180m attractor
+        # the policy converged to.
+        return -8.0 * x_term - 0.5 * y_term - v_err_weight * v_err - 5.0 * abs(s["angle"])
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -249,6 +253,7 @@ class RocketLandingEnv(gym.Env):
         s = self._state
 
         prev_vy = s["vy"]   # captured before physics for vy-improvement bonus
+        prev_vx = s["vx"]   # captured before physics for vx-improvement bonus
 
         # ---- Wind gust update ------------------------------------------------
         wind_mag = cfg.get("wind_mag", 0.0)
@@ -363,6 +368,39 @@ class RocketLandingEnv(gym.Env):
             # target speed profile with a positive signal so the agent actively seeks
             # the zone rather than just avoiding the penalty zone boundary.
             if abs(s["vy"] - v_target_step) <= 0.2 * abs(v_target_step):
+                reward += 2.0
+
+            # Dense horizontal-speed shaping, alongside the vy bonuses above.
+            # Without this, vy had three dense per-step channels (improvement bonus,
+            # overspeed penalty, on-speed bonus) while vx only appeared inside the
+            # shared v_err term in Phi -- the agent learned to nail vy and ignored vx.
+            #
+            # vx_correction is BIDIRECTIONAL (unlike vy_improvement's one-sided
+            # max(0,...)): positive when |vx-vx_desired| shrinks, negative when it
+            # grows. A one-sided version let the agent drift the wrong way for free
+            # (observed: x=-180m, vx_desired=+9, actual vx=-44 -- moving further
+            # from the target cost nothing beyond the shared Phi term, which wasn't
+            # enough gradient to escape it). This actively punishes wrong-direction
+            # drift instead of merely failing to reward it.
+            vx_desired_step = float(np.clip(-0.05 * s["x"], -15.0, 15.0))
+            vx_correction   = abs(prev_vx - vx_desired_step) - abs(s["vx"] - vx_desired_step)
+            reward += 3.0 * vx_correction
+
+            # Magnitude-based overspeed penalty: fires whenever |vx| exceeds
+            # |vx_desired|, regardless of vx's sign. Unlike vy (always negative,
+            # so a signed ratio works), vx_desired flips sign depending on which
+            # side of the pad the rocket is on, so a magnitude comparison is the
+            # correct adaptation rather than a literal sign-based mirror of the
+            # vy overspeed penalty.
+            vx_overspeed = max(0.0, (abs(s["vx"]) - abs(vx_desired_step)) / max(abs(vx_desired_step), 1.0))
+            reward -= 2.0 * float(np.clip(vx_overspeed, 0.0, 1.0))
+
+            # On-speed bonus for vx matching vx_desired. Uses max(|vx_desired|, 1.0)
+            # as the tolerance base (unlike the vy version's bare abs(v_target_step))
+            # because vx_desired can legitimately be 0 (at x=0, pad centre) -- a bare
+            # 20%-of-target tolerance would shrink to a zero-width window exactly
+            # where it matters most.
+            if abs(s["vx"] - vx_desired_step) <= 0.2 * max(abs(vx_desired_step), 1.0):
                 reward += 2.0
 
         info = {
