@@ -72,8 +72,15 @@ SYNC_SAVE_FREQ = 50_000
 # the numbers got that extreme). Clamping directly is the standard fix.
 # Range [-2.0, 1.0] -> action_std in [~0.135, ~2.72], ample for a [0,1]/[-1,1]
 # bounded action space without ever reaching a damaging magnitude.
+#
+# TEMPORARY: ceiling raised 1.0 -> 1.5 (std up to ~4.48) starting at step
+# ~20.43M to try to force stage 8's policy out of a direction-blind vx lock
+# (vx pinned +15 to +23 across all eval episodes regardless of position
+# error, unchanged for 2M+ steps at the old ceiling). Revert to 1.0 once vx
+# variance increases (sign it's exploring away from the lock) or after
+# ~3M steps if it hasn't helped.
 LOG_STD_MIN = -2.0
-LOG_STD_MAX = 1.0
+LOG_STD_MAX = 1.5
 
 
 # ---- Stage helpers -----------------------------------------------------------
@@ -342,6 +349,7 @@ def train(total_steps: int):
         save_freq=50_000 // N_ENVS,
         save_path=SAVE_DIR,
         name_prefix="ppo_rocket",
+        save_vecnormalize=True,
     )
 
     sync_cb    = SyncSaveCallback(curriculum_cb, save_freq=SYNC_SAVE_FREQ)
