@@ -78,16 +78,20 @@ STAGES = {
     # marginal-hover regime the stage-6 policy was trained on.
     7: dict(pad=20.0, alt=500.0,  vy=-20.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=72.0),
     # Stage 8 (was "8a"): transitional stage isolating the pd_gain=0.3 attitude-
-    # authority handoff from the wind challenge. Same as stage 7 but vy=-15
-    # instead of -20 -- less kinetic energy to shed, so it's solvable even at
-    # the ~TWR=1.0 marginal-hover regime. Fuel stays 72kg: raising it lowers
-    # TWR further (ENGINE_THRUST is fixed at 1200N across all stages, so more
-    # fuel = more mass = strictly less thrust-to-weight, never more -- 72.32kg
-    # is the TWR=1.0 break-even point, effectively the max viable fuel load).
-    # A prior run got stuck at 0% success for 10.4M steps at vy=-20 + wind
-    # simultaneously; this isolates variables so pd_gain=0.3 control is
-    # learned on its own before wind is introduced on top of it.
-    8: dict(pad=20.0, alt=500.0,  vy=-15.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=72.0),
+    # authority handoff from the wind challenge. vy=-10 (down from -15, itself
+    # down from the original -20) -- less kinetic energy to shed, so it's
+    # solvable even at the ~TWR=1.0 marginal-hover regime. Fuel stays 72kg:
+    # raising it lowers TWR further (ENGINE_THRUST is fixed at 1200N across
+    # all stages, so more fuel = more mass = strictly less thrust-to-weight,
+    # never more -- 72.32kg is the TWR=1.0 break-even point, effectively the
+    # max viable fuel load).
+    # vy=-15 solved vertical braking but exhausted the full fuel budget doing
+    # it (fuel left = 0.0kg in 8/10 eval episodes), leaving nothing for
+    # horizontal correction -- a fuel/TWR resource-contention problem, not a
+    # reward-shaping bug. vy=-10 reduces the braking fuel demand; x_range is
+    # also tightened 80->50 so less horizontal correction is needed on
+    # average, easing demand on both axes simultaneously.
+    8: dict(pad=20.0, alt=500.0,  vy=-10.0, x_range=50.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=72.0),
     # Stages 9-12: introduce horizontal wind gusts (wind_mag = peak acceleration m/s²).
     # Gusts are random bursts: 0.5-1 s on, 2-3 s off.  wind_x is added to obs so the
     # agent can react; the renderer draws a live arrow at the top of the screen.
