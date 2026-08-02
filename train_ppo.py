@@ -41,12 +41,14 @@ os.makedirs(LOG_DIR,  exist_ok=True)
 
 # ---- Curriculum settings -----------------------------------------------------
 ADVANCE_THRESHOLD = {
+    # Stage 0: diagnostic vx-isolation pretraining (see STAGES comment).
     # Stages 1-6: lowered to sprint through known-solvable curriculum after retrain.
     # Stage 7+ restored to original thresholds — these are where real learning happens.
     # Stage 8: pd_gain raised 0.3->0.4 (more built-in attitude authority, see
     # STAGES comment). Stage 9 (new): intermediate pd_gain=0.35 step down to
     # the old 0.3 before wind is introduced. Stages 10-13 are the old 9-12
     # renumbered (wind stages).
+    0: 0.80,
     1: 0.65, 2: 0.65, 3: 0.60, 4: 0.60,
     5: 0.60, 6: 0.60, 7: 0.70,
     8: 0.80, 9: 0.80, 10: 0.80, 11: 0.75, 12: 0.70, 13: 0.65,

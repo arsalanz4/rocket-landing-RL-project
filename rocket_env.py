@@ -63,6 +63,18 @@ MAX_STEPS         = 2000
 # pd_gain: weight of the PD stabiliser in the residual gimbal formula.
 # vx_range / angle_range: random initial horizontal velocity and tilt (stages 4+).
 STAGES = {
+    # Stage 0: diagnostic vx-isolation pretraining, inserted ahead of stage 1.
+    # Not part of the normal progression -- used once to test whether the
+    # current (already-trained) policy can learn to track vx_desired at all
+    # when vy is trivially easy (alt=50, vy0=-3, full pd_gain=1.0 attitude
+    # authority) and x_range/vx_range give it a real horizontal task. Reward
+    # function is untouched -- vy bonus terms stay fully active, they're just
+    # easy to satisfy here. If the existing policy still can't pass this
+    # (existing landing check already requires |vx|<=MAX_LANDING_VX=3.0 at
+    # touchdown), that rules out "vy signal competition" as the cause of the
+    # vx direction-lock seen at stage 8, since there's essentially no
+    # competition here.
+    0: dict(pad=20.0, alt=50.0, vy=-3.0, x_range=50.0, vx_range=10.0, angle_range=0.05, pd_gain=1.0, fuel=72.0),
     1: dict(pad=40.0, alt=150.0, vy=-5.0,  x_range=10.0, vx_range=0.0, angle_range=0.05, pd_gain=1.0),
     2: dict(pad=30.0, alt=200.0, vy=-10.0, x_range=25.0, vx_range=0.0, angle_range=0.05, pd_gain=1.0),
     3: dict(pad=20.0, alt=250.0, vy=-10.0, x_range=40.0, vx_range=0.0, angle_range=0.05, pd_gain=1.0),
@@ -122,7 +134,7 @@ STAGES = {
     12: dict(pad=10.0, alt=750.0,  vy=-20.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=90.0,  wind_mag=15.0),
     13: dict(pad=5.0,  alt=1000.0, vy=-20.0, x_range=100.0, vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=110.0, wind_mag=20.0),
 }
-MAX_STAGE = len(STAGES)
+MAX_STAGE = max(STAGES.keys())
 
 
 class RocketLandingEnv(gym.Env):
