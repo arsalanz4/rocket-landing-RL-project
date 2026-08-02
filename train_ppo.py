@@ -43,11 +43,13 @@ os.makedirs(LOG_DIR,  exist_ok=True)
 ADVANCE_THRESHOLD = {
     # Stages 1-6: lowered to sprint through known-solvable curriculum after retrain.
     # Stage 7+ restored to original thresholds — these are where real learning happens.
-    # Stage 8 (new, transitional "8a"): pd_gain=0.3 handoff isolated from wind,
-    # vy=-15. Stages 9-12 are the old 8-11 renumbered (wind stages).
+    # Stage 8: pd_gain raised 0.3->0.4 (more built-in attitude authority, see
+    # STAGES comment). Stage 9 (new): intermediate pd_gain=0.35 step down to
+    # the old 0.3 before wind is introduced. Stages 10-13 are the old 9-12
+    # renumbered (wind stages).
     1: 0.65, 2: 0.65, 3: 0.60, 4: 0.60,
     5: 0.60, 6: 0.60, 7: 0.70,
-    8: 0.80, 9: 0.80, 10: 0.75, 11: 0.70, 12: 0.65,
+    8: 0.80, 9: 0.80, 10: 0.80, 11: 0.75, 12: 0.70, 13: 0.65,
 }
 EVAL_WINDOW               = 20
 EVAL_FREQ                 = 20_000
@@ -73,14 +75,16 @@ SYNC_SAVE_FREQ = 50_000
 # Range [-2.0, 1.0] -> action_std in [~0.135, ~2.72], ample for a [0,1]/[-1,1]
 # bounded action space without ever reaching a damaging magnitude.
 #
-# TEMPORARY: ceiling raised 1.0 -> 1.5 (std up to ~4.48) starting at step
-# ~20.43M to try to force stage 8's policy out of a direction-blind vx lock
-# (vx pinned +15 to +23 across all eval episodes regardless of position
-# error, unchanged for 2M+ steps at the old ceiling). Revert to 1.0 once vx
-# variance increases (sign it's exploring away from the lock) or after
-# ~3M steps if it hasn't helped.
+# Ceiling was temporarily raised to 1.5 (std ~4.48) for ~12M steps to try to
+# break stage 8's direction-blind vx lock via more exploration noise. Result:
+# partial and non-durable -- vx went from 100% one sign to a genuine 50/50
+# split, but magnitude stayed ~21-28 regardless of direction and never
+# started tracking vx_desired. Reverted back to 1.0; the working theory has
+# shifted from "needs more exploration" to "pd_gain=0.3 structurally forces
+# the single gimbal actuator to fight between attitude stabilization and
+# horizontal correction" -- see STAGES stage 8/9 comments.
 LOG_STD_MIN = -2.0
-LOG_STD_MAX = 1.5
+LOG_STD_MAX = 1.0
 
 
 # ---- Stage helpers -----------------------------------------------------------
@@ -336,6 +340,15 @@ def train(total_steps: int):
         ckpt = find_latest_checkpoint()
         print(f"Resuming stage {stage} from checkpoint {ckpt}.zip ...")
         model = PPO.load(ckpt, env=train_env)
+        ckpt_dir, ckpt_name = os.path.split(ckpt)
+        vecnorm_path = os.path.join(ckpt_dir, ckpt_name.replace("ppo_rocket_", "ppo_rocket_vecnormalize_", 1) + ".pkl")
+        if os.path.exists(vecnorm_path):
+            print(f"  ... with matched VecNormalize stats from {vecnorm_path}")
+            saved_vec = VecNormalize.load(vecnorm_path, make_vec_env(make_env_fn(stage), n_envs=N_ENVS))
+            train_env.obs_rms = saved_vec.obs_rms
+            train_env.ret_rms = saved_vec.ret_rms
+        else:
+            print("  ... no matched VecNormalize found for this checkpoint, starting fresh stats")
     else:
         print(f"Starting fresh from stage {stage} ...")
         model = build_model(train_env, stage)

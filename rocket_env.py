@@ -77,7 +77,7 @@ STAGES = {
     # the transferred policy to give up on throttling.  At 72 kg TWR=1.002, same
     # marginal-hover regime the stage-6 policy was trained on.
     7: dict(pad=20.0, alt=500.0,  vy=-20.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=72.0),
-    # Stage 8 (was "8a"): transitional stage isolating the pd_gain=0.3 attitude-
+    # Stage 8 (was "8a"): transitional stage isolating the pd_gain attitude-
     # authority handoff from the wind challenge. vy=-10 (down from -15, itself
     # down from the original -20) -- less kinetic energy to shed, so it's
     # solvable even at the ~TWR=1.0 marginal-hover regime. Fuel stays 72kg:
@@ -91,19 +91,36 @@ STAGES = {
     # reward-shaping bug. vy=-10 reduces the braking fuel demand; x_range is
     # also tightened 80->50 so less horizontal correction is needed on
     # average, easing demand on both axes simultaneously.
-    8: dict(pad=20.0, alt=500.0,  vy=-10.0, x_range=50.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=72.0),
-    # Stages 9-12: introduce horizontal wind gusts (wind_mag = peak acceleration m/s²).
+    # That fixed fuel, but vx then converged to a direction-blind lock
+    # (constant ~20-28 m/s magnitude regardless of position error, ignoring
+    # vx_desired entirely) -- persisted through 4 rounds of reward-shaping and
+    # exploration-noise fixes without resolving. Working theory: gimbal is a
+    # single actuator (nozzle_angle = angle + gimbal*MAX_GIMBAL_ANGLE) driving
+    # BOTH torque (attitude) and the ax/ay thrust split (horizontal/vertical)
+    # simultaneously -- at pd_gain=0.3 the built-in PD stabilizer supplies
+    # little of the gimbal command, so the agent's own action has to cover
+    # attitude stabilization too, competing with horizontal correction on the
+    # same scalar output. pd_gain raised 0.3->0.4 here to give the PD term
+    # more of that budget back, freeing the agent's action to focus on vx.
+    8: dict(pad=20.0, alt=500.0,  vy=-10.0, x_range=50.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.4, fuel=72.0),
+    # Stage 9 (new): same as stage 8 but pd_gain=0.35 -- splits the step back
+    # down to the old pd_gain=0.3 into two increments instead of one, since
+    # stage 10 (wind) needs pd_gain=0.3 and dropping straight from 0.4 would
+    # reintroduce the original attitude-authority cliff this fix is meant to
+    # avoid.
+    9: dict(pad=20.0, alt=500.0,  vy=-10.0, x_range=50.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.35, fuel=72.0),
+    # Stages 10-13: introduce horizontal wind gusts (wind_mag = peak acceleration m/s²).
     # Gusts are random bursts: 0.5-1 s on, 2-3 s off.  wind_x is added to obs so the
     # agent can react; the renderer draws a live arrow at the top of the screen.
-    # Stage 9 keeps vy=-15 (matching stage 8) -- wind is the new challenge here,
-    # not descent speed; vy=-20 resumes from stage 10 onward.
-    # Extra fuel (stages 10-12) compensates for the lateral corrections wind forces
+    # Stage 10 keeps vy=-15 (matching stage 8/9) -- wind is the new challenge here,
+    # not descent speed; vy=-20 resumes from stage 11 onward.
+    # Extra fuel (stages 11-13) compensates for the lateral corrections wind forces
     # require -- note this trades away hover margin (TWR<1 at 80kg+), which is a
     # known, deliberate tension for those later/harder stages, not an oversight.
-    9:  dict(pad=20.0, alt=500.0,  vy=-15.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=72.0,  wind_mag=5.0),
-    10: dict(pad=10.0, alt=500.0,  vy=-20.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=80.0,  wind_mag=10.0),
-    11: dict(pad=10.0, alt=750.0,  vy=-20.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=90.0,  wind_mag=15.0),
-    12: dict(pad=5.0,  alt=1000.0, vy=-20.0, x_range=100.0, vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=110.0, wind_mag=20.0),
+    10: dict(pad=20.0, alt=500.0,  vy=-15.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=72.0,  wind_mag=5.0),
+    11: dict(pad=10.0, alt=500.0,  vy=-20.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=80.0,  wind_mag=10.0),
+    12: dict(pad=10.0, alt=750.0,  vy=-20.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=90.0,  wind_mag=15.0),
+    13: dict(pad=5.0,  alt=1000.0, vy=-20.0, x_range=100.0, vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=110.0, wind_mag=20.0),
 }
 MAX_STAGE = len(STAGES)
 
