@@ -76,7 +76,7 @@ def draw_gradient_sky(surf):
         pygame.draw.line(surf, (r, g, b), (0, row), (W, row))
 
 
-def draw_ground(surf, pad_half=LANDING_PAD_HALF):
+def draw_ground(surf, pad_half=40.0):
     ground_y = world_to_screen(0, 0)[1]
     pygame.draw.rect(surf, GROUND_COL, (0, ground_y, W, H - ground_y))
 
