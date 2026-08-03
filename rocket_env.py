@@ -81,7 +81,19 @@ STAGES = {
     # Stage 4: increase altitude and speed only — no random vx/angle yet, keep pd_gain high
     4: dict(pad=20.0, alt=350.0, vy=-15.0, x_range=60.0, vx_range=0.0, angle_range=0.05, pd_gain=1.0),
     # Stages 5-7: 500m altitude requires more fuel — 20% extra (72 kg vs 60)
-    5: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.7, fuel=72.0),
+    # Stage 5 vy reduced 20->15 (matching stage 4): stage 4->5 was stacking THREE
+    # new challenges simultaneously (pd_gain 1.0->0.7, vx_range 0->5,
+    # angle_range 0.05->0.17) on top of a harder vy target at fuel=72's marginal
+    # TWR=1.0027 -- same TWR a prior model lineage did successfully learn to
+    # brake at (per the stage 7 comment below), so this isn't a structural
+    # infeasibility like the original stage-8 fuel/TWR bug, but the current
+    # model (freshly re-acquired via the stage-0 diagnostic detour + rapid
+    # 1-4 sprint) showed a genuine stall here: 7.8M steps with zero variance
+    # in vy/vx/reward, unlike every other stage transition this session which
+    # showed at least partial drift within 1-2M steps. Isolating the new
+    # pd_gain/vx_range/angle_range elements from a simultaneously harder vy
+    # target should let it re-acquire the skill without three things at once.
+    5: dict(pad=20.0, alt=500.0, vy=-15.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.7, fuel=72.0),
     6: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.5, fuel=72.0),
     # Stage 7 fuel restored to 72 kg (matches stages 5-6): at 94 kg the rocket has
     # TWR=0.85 — full throttle still accelerates it downward for the first 11 s,
