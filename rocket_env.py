@@ -93,7 +93,20 @@ STAGES = {
     # showed at least partial drift within 1-2M steps. Isolating the new
     # pd_gain/vx_range/angle_range elements from a simultaneously harder vy
     # target should let it re-acquire the skill without three things at once.
-    5: dict(pad=20.0, alt=500.0, vy=-15.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.7, fuel=72.0),
+    # Fuel dropped back to the default 60kg (was 72kg): the extra 12kg was
+    # justified by vy=-20's higher braking demand, but vy is now -15 here
+    # (matching stage 4, which already uses 60kg successfully) so that
+    # rationale no longer applies. After the vy fix above solved vertical
+    # braking, vx exploded into a much larger runaway (magnitude ~100-120,
+    # up from the pre-fix lock's ~60, plateaued across 3 consecutive checks
+    # spanning ~6M steps with 50% of episodes burning 100% of fuel on one
+    # huge horizontal push) -- the extra fuel that vy no longer needed was
+    # apparently being spent entirely on an uncorrected horizontal burn.
+    # 60kg gives TWR=1.112 (up from 1.0027 at 72kg) -- strictly better
+    # vertical braking margin -- while directly capping the total impulse
+    # available for a runaway horizontal burn, regardless of what the
+    # reward function does or doesn't penalize.
+    5: dict(pad=20.0, alt=500.0, vy=-15.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.7, fuel=60.0),
     6: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.5, fuel=72.0),
     # Stage 7 fuel restored to 72 kg (matches stages 5-6): at 94 kg the rocket has
     # TWR=0.85 — full throttle still accelerates it downward for the first 11 s,
