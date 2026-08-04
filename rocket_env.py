@@ -107,7 +107,14 @@ STAGES = {
     # available for a runaway horizontal burn, regardless of what the
     # reward function does or doesn't penalize.
     5: dict(pad=20.0, alt=500.0, vy=-15.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.7, fuel=60.0),
-    6: dict(pad=20.0, alt=500.0, vy=-20.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.5, fuel=72.0),
+    # vy reduced 20->15 (matching stage 5's fix): stage 6 hit the exact same
+    # TWR=1.0027 stall/runaway pattern as stage 5 after ~2M steps of healthy
+    # progress (success 20%->0%, ep_rew_mean flipped positive->steeply negative,
+    # vx runaway to 40-80+ magnitude in 8/10 eval episodes while vy stayed
+    # well-controlled). Applying the same de-stack fix first; if vx runs away
+    # worse once vy braking gets cheaper (as happened at stage 5), fuel will
+    # need to drop too (currently still 72kg, unchanged from before).
+    6: dict(pad=20.0, alt=500.0, vy=-15.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.5, fuel=72.0),
     # Stage 7 fuel restored to 72 kg (matches stages 5-6): at 94 kg the rocket has
     # TWR=0.85 — full throttle still accelerates it downward for the first 11 s,
     # making the braking physics qualitatively different from stages 5-6 and causing
