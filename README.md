@@ -78,6 +78,7 @@ A detailed technical writeup covering all five failure modes and their implicati
 ## Author
 
 Arsalan Zadran 
+
 Law graduate, AI developer, Geospatial intelligence researcher.
 
 GitHub: github.com/arsalanz4
