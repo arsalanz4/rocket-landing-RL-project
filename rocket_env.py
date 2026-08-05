@@ -128,9 +128,15 @@ STAGES = {
     # episodes positive, 5 in the +35-48 magnitude range), success oscillating
     # 0-35% (mostly 5-20%) for ~11.9M cumulative steps with no upward trend --
     # longer than stage 5's stall took to manifest, so not just slow transition
-    # turbulence. Fuel left at 72kg for now, same order as stages 5-6: vy first,
-    # fuel 72->60kg only if vx runs away worse once vy braking gets cheaper.
-    7: dict(pad=20.0, alt=500.0,  vy=-15.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=72.0),
+    # turbulence.
+    # fuel reduced 72->60kg (same second-step fix as stage 5): the vy fix alone
+    # made the vx bias WORSE and more consistent -- 9/10 eval episodes locked to
+    # a tight +26 to +42.5 positive cluster (up from 7/10 with a looser, partly
+    # negative spread pre-fix), success dropped to 0/10. Same mechanism as
+    # stage 5: cheaper vy braking freed fuel headroom the policy spent on an
+    # uncorrected horizontal burn. 60kg improves TWR 1.0027->1.112 and caps the
+    # impulse available for the runaway burn.
+    7: dict(pad=20.0, alt=500.0,  vy=-15.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=60.0),
     # Stage 8 (was "8a"): transitional stage isolating the pd_gain attitude-
     # authority handoff from the wind challenge. vy=-10 (down from -15, itself
     # down from the original -20) -- less kinetic energy to shed, so it's
