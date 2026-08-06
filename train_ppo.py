@@ -406,7 +406,20 @@ def train(total_steps: int):
 
 # ---- Evaluation --------------------------------------------------------------
 
-def evaluate(n_episodes: int = 10):
+# Default eval size/seed. Raised 10->50 and given a fixed default seed after
+# this session's plateau investigation found 10-episode unseeded evals
+# unreliable for before/after comparisons -- this policy's outcome
+# distribution is wide and bimodal (near-perfect landing OR a large miss),
+# so a small unseeded sample can land anywhere in that range purely by
+# chance, making two 10-episode evals of the SAME unchanged model look like
+# different states when nothing actually changed. 50 episodes with a fixed
+# seed gives a stable, reproducible read and makes before/after comparisons
+# actually comparable.
+DEFAULT_EVAL_EPISODES = 50
+DEFAULT_EVAL_SEED     = 42
+
+
+def evaluate(n_episodes: int = DEFAULT_EVAL_EPISODES, seed: int | None = DEFAULT_EVAL_SEED):
     if not os.path.exists(f"{BEST_MODEL}.zip"):
         print("No model found. Run training first.")
         return
@@ -424,10 +437,15 @@ def evaluate(n_episodes: int = 10):
     landings = 0
 
     print(f"Evaluating stage {stage}: pad={cfg['pad']}m  alt={cfg['alt']}m  "
-          f"pd_gain={cfg['pd_gain']}\n")
+          f"pd_gain={cfg['pd_gain']}  seed={seed}\n")
 
     for ep in range(n_episodes):
-        obs, _ = raw_env.reset()
+        # Seed only the first episode's reset -- Gymnasium's reset(seed=...)
+        # reseeds the env's RNG; leaving seed=None on later episodes lets it
+        # keep evolving deterministically from that seed, so the FULL
+        # sequence of spawn conditions across all n_episodes is fixed and
+        # reproducible run-to-run given the same top-level seed.
+        obs, _ = raw_env.reset(seed=seed if ep == 0 else None)
         done   = False
         total_r = 0.0
         info   = {}
@@ -467,12 +485,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--steps",    type=int, default=3_000_000)
     parser.add_argument("--eval",     action="store_true")
-    parser.add_argument("--episodes", type=int, default=10)
+    parser.add_argument("--episodes", type=int, default=DEFAULT_EVAL_EPISODES)
+    parser.add_argument("--seed",     type=int, default=DEFAULT_EVAL_SEED)
     args = parser.parse_args()
 
     if args.eval:
-        evaluate(n_episodes=args.episodes)
+        evaluate(n_episodes=args.episodes, seed=args.seed)
     else:
         train(total_steps=args.steps)
         print("\n--- Final evaluation ---")
-        evaluate(n_episodes=10)
+        evaluate()
