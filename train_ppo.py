@@ -88,6 +88,18 @@ SYNC_SAVE_FREQ = 50_000
 LOG_STD_MIN = -2.0
 LOG_STD_MAX = 1.0
 
+# Learning rate applied on RESUME only (build_model's 3e-4 still applies to a
+# fresh model). Introduced at step ~135M / stage 7's 18.8M-step plateau under
+# the strict |vx|<=3.0 landing criterion: the run has used a constant 3e-4 for
+# its entire history, including this delicate late-stage precision-tuning
+# phase, where large PPO updates risk kicking the policy into a bad attractor
+# (plausible contributor to the tight vx locks seen this session) rather than
+# refining around the current policy. Passed via PPO.load's custom_objects,
+# which overrides the value before SB3 rebuilds the internal lr_schedule --
+# does not touch the reward function or curriculum, so it's attributable
+# independently of the x_range change made alongside it.
+RESUME_LEARNING_RATE = 1e-4
+
 
 # ---- Stage helpers -----------------------------------------------------------
 
@@ -334,14 +346,14 @@ def train(total_steps: int):
 
     if os.path.exists(f"{BEST_MODEL}.zip") and os.path.exists(NORM_STATS):
         print(f"Resuming stage {stage} from saved model ...")
-        model = PPO.load(BEST_MODEL, env=train_env)
+        model = PPO.load(BEST_MODEL, env=train_env, custom_objects={"learning_rate": RESUME_LEARNING_RATE})
         saved_vec = VecNormalize.load(NORM_STATS, make_vec_env(make_env_fn(stage), n_envs=N_ENVS))
         train_env.obs_rms = saved_vec.obs_rms
         train_env.ret_rms = saved_vec.ret_rms
     elif find_latest_checkpoint():
         ckpt = find_latest_checkpoint()
         print(f"Resuming stage {stage} from checkpoint {ckpt}.zip ...")
-        model = PPO.load(ckpt, env=train_env)
+        model = PPO.load(ckpt, env=train_env, custom_objects={"learning_rate": RESUME_LEARNING_RATE})
         ckpt_dir, ckpt_name = os.path.split(ckpt)
         vecnorm_path = os.path.join(ckpt_dir, ckpt_name.replace("ppo_rocket_", "ppo_rocket_vecnormalize_", 1) + ".pkl")
         if os.path.exists(vecnorm_path):

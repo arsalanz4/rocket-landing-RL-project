@@ -149,7 +149,19 @@ STAGES = {
     # stage 5: cheaper vy braking freed fuel headroom the policy spent on an
     # uncorrected horizontal burn. 60kg improves TWR 1.0027->1.112 and caps the
     # impulse available for the runaway burn.
-    7: dict(pad=20.0, alt=500.0,  vy=-15.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=60.0),
+    # x_range reduced 80->60 to address the ~18.8M-step plateau: success stuck
+    # 0-30% under the strict |vx|<=3.0 landing criterion despite no reward bug
+    # found (vx shaping confirmed sound and symmetric to vy's) and a failed
+    # MAX_LANDING_VX 3.0->8.0 widen (reproducibly caused a one-directional vx
+    # lock twice, reverted -- see MAX_LANDING_VX comment above). Shortening the
+    # spawn distance reduces how much horizontal momentum/position error the
+    # policy must convert into a converged low-vx approach by touchdown,
+    # without touching the terminal criterion, vx_range, or any reward term --
+    # same lever used at stage 8 during the original vx-lock saga (x_range
+    # 80->50 there). Paired with a learning-rate reduction on resume (see
+    # train_ppo.py's PPO.load call) as the first, lowest-risk pass at this
+    # plateau before considering reward-shaping changes.
+    7: dict(pad=20.0, alt=500.0,  vy=-15.0, x_range=60.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=60.0),
     # Stage 8 (was "8a"): transitional stage isolating the pd_gain attitude-
     # authority handoff from the wind challenge. vy=-10 (down from -15, itself
     # down from the original -20) -- less kinetic energy to shed, so it's
