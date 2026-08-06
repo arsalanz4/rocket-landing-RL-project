@@ -89,16 +89,16 @@ LOG_STD_MIN = -2.0
 LOG_STD_MAX = 1.0
 
 # Learning rate applied on RESUME only (build_model's 3e-4 still applies to a
-# fresh model). Introduced at step ~135M / stage 7's 18.8M-step plateau under
-# the strict |vx|<=3.0 landing criterion: the run has used a constant 3e-4 for
-# its entire history, including this delicate late-stage precision-tuning
-# phase, where large PPO updates risk kicking the policy into a bad attractor
-# (plausible contributor to the tight vx locks seen this session) rather than
-# refining around the current policy. Passed via PPO.load's custom_objects,
-# which overrides the value before SB3 rebuilds the internal lr_schedule --
-# does not touch the reward function or curriculum, so it's attributable
-# independently of the x_range change made alongside it.
-RESUME_LEARNING_RATE = 1e-4
+# fresh model). Was cut to 1e-4 alongside the x_range 80->60 reduction as a
+# low-risk pass at stage 7's ~18.8M-step plateau, but the same tight
+# one-directional vx lock that hit the earlier MAX_LANDING_VX widen
+# experiment reappeared a third time under this reward-untouched pair of
+# changes -- pointing at the step-135M checkpoint region itself being fragile
+# rather than any specific intervention. Reverted to 3e-4 (a no-op override,
+# matching the original constant rate) to run a clean control test: does this
+# checkpoint lock even with ZERO changes, given enough steps? See the paired
+# x_range revert in rocket_env.py's stage 7 comment.
+RESUME_LEARNING_RATE = 3e-4
 
 
 # ---- Stage helpers -----------------------------------------------------------
