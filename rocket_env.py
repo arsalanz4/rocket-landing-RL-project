@@ -55,16 +55,20 @@ ANGULAR_DAMPING   = 0.94
 MAX_TILT          = np.radians(60)
 
 MAX_LANDING_VY    = 5.0
-# Widened 3.0->8.0: stage 7 (pd_gain=0.3) plateaued at 0-30% success for
-# ~18.8M steps despite healthy ep_rew_mean and a code review finding no bug --
-# vx magnitude was consistently 13-45 in the eval printouts, well above the
-# old 3.0 cutoff, on landings that otherwise scored very high reward and were
-# centred near the pad. Working theory: 3.0 was calibrated tighter than what
-# this stage's shared-actuator dynamics (gimbal drives both attitude torque
-# and horizontal thrust split) can reliably achieve. 8.0 still requires real
-# control -- spawn vx_range is 0-5 at stages 1-9 -- but stops penalizing
-# landings the reward function already recognizes as good.
-MAX_LANDING_VX    = 8.0
+# Reverted 8.0->3.0 (original value). The 8.0 widen was tried after stage 7
+# plateaued for ~18.8M steps, but training ~2.7-3.6M steps forward from the
+# same checkpoint under the widened threshold reproducibly drifted into a
+# tight one-directional vx lock twice in a row (vx clustered -33 to -43,
+# unusually high leftover fuel 2-28kg vs the normal 0.0kg) -- reproducible
+# across two independent rollback-and-retrain attempts from the same step-135M
+# checkpoint, which rules out coincidental PPO drift as the explanation even
+# though the exact reward-math mechanism causing it isn't fully understood
+# (the change only altered the terminal reward for vx in [3,8], not vx>8
+# where the lock sits -- likely a second-order effect on the value function's
+# learned landscape rather than a direct one-step reward change). Reverting
+# to the known-stable 3.0 rather than continuing to retrain into the same
+# failure a third time.
+MAX_LANDING_VX    = 3.0
 DT                = 0.05
 MAX_STEPS         = 2000
 
