@@ -27,7 +27,7 @@ from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import VecNormalize
 
-from rocket_env import RocketLandingEnv, STAGES, MAX_STAGE
+from rocket_env import RocketLandingEnv, STAGES, MAX_STAGE, MAX_LANDING_VY, MAX_LANDING_VX
 
 # ---- Paths -------------------------------------------------------------------
 SAVE_DIR   = "rocket/checkpoints"
@@ -185,7 +185,7 @@ class CurriculumCallback(BaseCallback):
                 done = terminated or truncated
 
             cfg      = STAGES[self.stage]
-            speed_ok = abs(info["vy"]) <= 5.0 and abs(info["vx"]) <= 3.0
+            speed_ok = abs(info["vy"]) <= MAX_LANDING_VY and abs(info["vx"]) <= MAX_LANDING_VX
             on_pad   = abs(raw._state["x"]) <= cfg["pad"]
             results.append(speed_ok and on_pad)
 
@@ -429,7 +429,7 @@ def evaluate(n_episodes: int = 10):
         vy     = info.get("vy", -999)
         fuel   = info.get("fuel_left", 0)
         on_pad = abs(raw_env._state["x"]) <= cfg["pad"]
-        speed_ok = abs(vy) <= 5.0 and abs(info.get("vx", 99)) <= 3.0
+        speed_ok = abs(vy) <= MAX_LANDING_VY and abs(info.get("vx", 99)) <= MAX_LANDING_VX
 
         if speed_ok and on_pad:
             outcome = "LANDED"
