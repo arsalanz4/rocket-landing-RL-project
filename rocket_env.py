@@ -510,28 +510,6 @@ class RocketLandingEnv(gym.Env):
             if abs(s["vx"] - vx_desired_step) <= 0.2 * max(abs(vx_desired_step), 1.0):
                 reward += 2.0
 
-            # Near-touchdown absolute-|vx| bonus. All the vx terms above reward
-            # tracking vx_desired (the P-controller pulling toward the pad), not
-            # the ABSOLUTE |vx| that the terminal landing check actually cares
-            # about -- if x hasn't converged yet, vx_desired can still be large
-            # even at low altitude, so "on-speed" doesn't guarantee being under
-            # the terminal threshold. This is additive and altitude-gated (only
-            # fires below 100m, where a tilt-and-coast approach should already
-            # be established) so it doesn't interfere with normal cross-country
-            # vx_desired-tracking behavior at altitude. Does not touch
-            # vx_desired_step, the on-speed bonus above, or MAX_LANDING_VX.
-            if s["y"] < 100.0:
-                reward += 2.0 * float(np.clip(1.0 - abs(s["vx"]) / 10.0, 0.0, 1.0))
-
-            # Progressively-gated absolute-|vx| threshold bonus, alongside the
-            # bonus above. Rewards being under a flat 5.0 m/s absolute speed in
-            # the wider 150m final-approach window (vs. the 100m window above),
-            # regardless of position error -- pulls toward low horizontal speed
-            # specifically in the phase where the tilt-and-coast trim strategy
-            # needs to be established, rather than only in the last few meters.
-            if s["y"] < 150.0 and abs(s["vx"]) < 5.0:
-                reward += 1.5
-
         info = {
             "altitude":   s["y"],
             "vy":         s["vy"],
