@@ -43,15 +43,19 @@ os.makedirs(LOG_DIR,  exist_ok=True)
 ADVANCE_THRESHOLD = {
     # Stage 0: diagnostic vx-isolation pretraining (see STAGES comment).
     # Stages 1-6: lowered to sprint through known-solvable curriculum after retrain.
-    # Stage 7+ restored to original thresholds — these are where real learning happens.
-    # Stage 8: pd_gain raised 0.3->0.4 (more built-in attitude authority, see
-    # STAGES comment). Stage 9 (new): intermediate pd_gain=0.35 step down to
-    # the old 0.3 before wind is introduced. Stages 10-13 are the old 9-12
-    # renumbered (wind stages).
+    # Stage 7 (new): vx-isolation pretraining at pd_gain=0.3 (see STAGES comment) --
+    # thresholded like stage 0 since it's meant to confirm clean convergence, not
+    # partial progress, before handing off to stage 8's harder combined problem.
+    # Stage 8 (was 7) restored to the original threshold — this is where real
+    # learning happens.
+    # Stage 9 (was 8): pd_gain raised 0.3->0.4 (more built-in attitude authority,
+    # see STAGES comment). Stage 10 (was 9, "new"): intermediate pd_gain=0.35 step
+    # down to the old 0.3 before wind is introduced. Stages 11-14 are the old
+    # 10-13 renumbered (wind stages).
     0: 0.80,
     1: 0.65, 2: 0.65, 3: 0.60, 4: 0.60,
-    5: 0.60, 6: 0.60, 7: 0.70,
-    8: 0.80, 9: 0.80, 10: 0.80, 11: 0.75, 12: 0.70, 13: 0.65,
+    5: 0.60, 6: 0.60, 7: 0.75, 8: 0.70,
+    9: 0.80, 10: 0.80, 11: 0.80, 12: 0.75, 13: 0.70, 14: 0.65,
 }
 EVAL_WINDOW               = 20
 EVAL_FREQ                 = 20_000

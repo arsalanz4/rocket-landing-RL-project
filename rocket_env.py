@@ -41,7 +41,7 @@ from gymnasium import spaces
 GRAVITY           = 9.81
 ROCKET_MASS       = 50.0
 FUEL_CAPACITY     = 60.0
-MAX_FUEL          = 120.0   # obs-space upper bound; stages 8-11 can carry more than 60 kg
+MAX_FUEL          = 120.0   # obs-space upper bound; stages 9-12 can carry more than 60 kg
 MAX_WIND          = 20.0    # obs-space upper bound for wind_x (m/s²)
 ENGINE_THRUST     = 1200.0
 FUEL_BURN_RATE    = 2.0
@@ -85,7 +85,7 @@ STAGES = {
     # easy to satisfy here. If the existing policy still can't pass this
     # (existing landing check already requires |vx|<=MAX_LANDING_VX=3.0 at
     # touchdown), that rules out "vy signal competition" as the cause of the
-    # vx direction-lock seen at stage 8, since there's essentially no
+    # vx direction-lock seen at stage 9, since there's essentially no
     # competition here.
     0: dict(pad=20.0, alt=50.0, vy=-3.0, x_range=50.0, vx_range=10.0, angle_range=0.05, pd_gain=1.0, fuel=72.0),
     1: dict(pad=40.0, alt=150.0, vy=-5.0,  x_range=10.0, vx_range=0.0, angle_range=0.05, pd_gain=1.0),
@@ -98,8 +98,8 @@ STAGES = {
     # new challenges simultaneously (pd_gain 1.0->0.7, vx_range 0->5,
     # angle_range 0.05->0.17) on top of a harder vy target at fuel=72's marginal
     # TWR=1.0027 -- same TWR a prior model lineage did successfully learn to
-    # brake at (per the stage 7 comment below), so this isn't a structural
-    # infeasibility like the original stage-8 fuel/TWR bug, but the current
+    # brake at (per the stage 8 comment below), so this isn't a structural
+    # infeasibility like the original stage-9 fuel/TWR bug, but the current
     # model (freshly re-acquired via the stage-0 diagnostic detour + rapid
     # 1-4 sprint) showed a genuine stall here: 7.8M steps with zero variance
     # in vy/vx/reward, unlike every other stage transition this session which
@@ -162,8 +162,40 @@ STAGES = {
     # run a clean control test: does this checkpoint lock even with ZERO
     # changes, given enough steps? See RESUME_LEARNING_RATE comment in
     # train_ppo.py for the paired revert.
-    7: dict(pad=20.0, alt=500.0,  vy=-15.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=60.0),
-    # Stage 8 (was "8a"): transitional stage isolating the pd_gain attitude-
+    #
+    # Result: ran a clean control test AND a near-touchdown |vx| dense-bonus
+    # reward change (both reward-untouched-vs-reward-shaping variants) --
+    # neither moved the needle. Control test reproduced the same lock a 3rd
+    # time; the dense bonus ran 7.5M steps (135.02M-142.54M) and averaged
+    # 4.4% success with no upward trend (4.8% first half, 4.0% second half),
+    # so it was reverted too. Both reward-adjacent and reward-neutral retrains
+    # of this exact checkpoint region converge to the same bimodal ~8-12%
+    # plateau (near-perfect landing OR a 20-49 m/s miss, little in between).
+    # Confirmed-healthy baseline for this plateau is the checkpoint at step
+    # 135,000,000 (paused_stage7_20260805_171933): 8/50 (seed 42, fixed-seed
+    # 50-episode eval), pos/neg misses roughly balanced (21/25) -- NOT
+    # direction-locked, matching the described bimodal shape.
+    #
+    # Stage 7 (new): vx-isolation pretraining at pd_gain=0.3, the exact
+    # attitude-authority level the plateau above trains under. Stage 0
+    # already showed the vx direction-lock is learnable, not a true local
+    # optimum -- but only at pd_gain=1.0 (full PD authority), leaving the
+    # pd_gain=0.3 actuator-contention hypothesis (gimbal doing double duty
+    # for both attitude AND horizontal steering -- see stage 9's comment)
+    # untested in isolation from vy. Same alt/x_range/vx_range/angle_range/
+    # pd_gain/fuel as stage 8 below, so the horizontal-control task and the
+    # 500m "must establish trim early" dynamic are identical -- only vy is
+    # trivialised (-3 instead of -15), removing the vy braking/fuel-TWR
+    # contention already isolated and fixed at earlier stages. If the policy
+    # learns to track vx_desired here, pd_gain=0.3 alone isn't the blocker
+    # and the plateau lives elsewhere (e.g. genuinely needs the near-
+    # touchdown reward-shaping direction, despite the first attempt above
+    # failing); if it can't, that isolates actuator-authority contention as
+    # the real cause, independent of vy entirely -- point for further
+    # reward/curriculum work either way.
+    7: dict(pad=20.0, alt=500.0, vy=-3.0, x_range=80.0, vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=60.0),
+    8: dict(pad=20.0, alt=500.0,  vy=-15.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=60.0),
+    # Stage 9 (was "8a"): transitional stage isolating the pd_gain attitude-
     # authority handoff from the wind challenge. vy=-10 (down from -15, itself
     # down from the original -20) -- less kinetic energy to shed, so it's
     # solvable even at the ~TWR=1.0 marginal-hover regime. Fuel stays 72kg:
@@ -188,25 +220,25 @@ STAGES = {
     # attitude stabilization too, competing with horizontal correction on the
     # same scalar output. pd_gain raised 0.3->0.4 here to give the PD term
     # more of that budget back, freeing the agent's action to focus on vx.
-    8: dict(pad=20.0, alt=500.0,  vy=-10.0, x_range=50.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.4, fuel=72.0),
-    # Stage 9 (new): same as stage 8 but pd_gain=0.35 -- splits the step back
-    # down to the old pd_gain=0.3 into two increments instead of one, since
-    # stage 10 (wind) needs pd_gain=0.3 and dropping straight from 0.4 would
-    # reintroduce the original attitude-authority cliff this fix is meant to
-    # avoid.
-    9: dict(pad=20.0, alt=500.0,  vy=-10.0, x_range=50.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.35, fuel=72.0),
-    # Stages 10-13: introduce horizontal wind gusts (wind_mag = peak acceleration m/s²).
+    9: dict(pad=20.0, alt=500.0,  vy=-10.0, x_range=50.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.4, fuel=72.0),
+    # Stage 10 (was 9, "new"): same as stage 9 but pd_gain=0.35 -- splits the
+    # step back down to the old pd_gain=0.3 into two increments instead of
+    # one, since stage 11 (wind) needs pd_gain=0.3 and dropping straight from
+    # 0.4 would reintroduce the original attitude-authority cliff this fix is
+    # meant to avoid.
+    10: dict(pad=20.0, alt=500.0,  vy=-10.0, x_range=50.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.35, fuel=72.0),
+    # Stages 11-14: introduce horizontal wind gusts (wind_mag = peak acceleration m/s²).
     # Gusts are random bursts: 0.5-1 s on, 2-3 s off.  wind_x is added to obs so the
     # agent can react; the renderer draws a live arrow at the top of the screen.
-    # Stage 10 keeps vy=-15 (matching stage 8/9) -- wind is the new challenge here,
-    # not descent speed; vy=-20 resumes from stage 11 onward.
-    # Extra fuel (stages 11-13) compensates for the lateral corrections wind forces
+    # Stage 11 keeps vy=-15 (matching stages 9/10) -- wind is the new challenge here,
+    # not descent speed; vy=-20 resumes from stage 12 onward.
+    # Extra fuel (stages 12-14) compensates for the lateral corrections wind forces
     # require -- note this trades away hover margin (TWR<1 at 80kg+), which is a
     # known, deliberate tension for those later/harder stages, not an oversight.
-    10: dict(pad=20.0, alt=500.0,  vy=-15.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=72.0,  wind_mag=5.0),
-    11: dict(pad=10.0, alt=500.0,  vy=-20.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=80.0,  wind_mag=10.0),
-    12: dict(pad=10.0, alt=750.0,  vy=-20.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=90.0,  wind_mag=15.0),
-    13: dict(pad=5.0,  alt=1000.0, vy=-20.0, x_range=100.0, vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=110.0, wind_mag=20.0),
+    11: dict(pad=20.0, alt=500.0,  vy=-15.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=72.0,  wind_mag=5.0),
+    12: dict(pad=10.0, alt=500.0,  vy=-20.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=80.0,  wind_mag=10.0),
+    13: dict(pad=10.0, alt=750.0,  vy=-20.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=90.0,  wind_mag=15.0),
+    14: dict(pad=5.0,  alt=1000.0, vy=-20.0, x_range=100.0, vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=110.0, wind_mag=20.0),
 }
 MAX_STAGE = max(STAGES.keys())
 
