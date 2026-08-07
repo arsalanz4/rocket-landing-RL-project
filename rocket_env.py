@@ -531,8 +531,19 @@ class RocketLandingEnv(gym.Env):
             # side of the pad the rocket is on, so a magnitude comparison is the
             # correct adaptation rather than a literal sign-based mirror of the
             # vy overspeed penalty.
+            #
+            # Uncapped (was clip(...,0,1), i.e. bottomed out at -2.0/step
+            # regardless of overshoot size): a vx of -42 against a desired +7
+            # paid the exact same per-step penalty as being 2x over target,
+            # so a smooth, well-controlled vy descent (near-constant +2/step
+            # on-speed bonus over an ~800-900 step episode, +1400-1800 total)
+            # could outweigh an enormous, wrong-direction vx overshoot and
+            # still net large positive reward without ever landing -- a real
+            # local optimum, confirmed via a locked stage-7 checkpoint scoring
+            # +2071 avg reward at 0/50 success. vy's analogous crash-case
+            # penalty (vy_excess below) was already uncapped; this matches it.
             vx_overspeed = max(0.0, (abs(s["vx"]) - abs(vx_desired_step)) / max(abs(vx_desired_step), 1.0))
-            reward -= 2.0 * float(np.clip(vx_overspeed, 0.0, 1.0))
+            reward -= 2.0 * float(vx_overspeed)
 
             # On-speed bonus for vx matching vx_desired. Uses max(|vx_desired|, 1.0)
             # as the tolerance base (unlike the vy version's bare abs(v_target_step))
