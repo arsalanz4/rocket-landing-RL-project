@@ -227,18 +227,40 @@ STAGES = {
     # 0.4 would reintroduce the original attitude-authority cliff this fix is
     # meant to avoid.
     10: dict(pad=20.0, alt=500.0,  vy=-10.0, x_range=50.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.35, fuel=72.0),
-    # Stages 11-14: introduce horizontal wind gusts (wind_mag = peak acceleration m/s²).
+    # Stages 11-15: introduce horizontal wind gusts (wind_mag = peak acceleration m/s²).
     # Gusts are random bursts: 0.5-1 s on, 2-3 s off.  wind_x is added to obs so the
     # agent can react; the renderer draws a live arrow at the top of the screen.
-    # Stage 11 keeps vy=-15 (matching stages 9/10) -- wind is the new challenge here,
-    # not descent speed; vy=-20 resumes from stage 12 onward.
-    # Extra fuel (stages 12-14) compensates for the lateral corrections wind forces
+    #
+    # Stage 11 (new): wind-isolation pretraining, same idea as stage 7's
+    # vx-isolation -- old stage 11 (wind_mag=5.0 at the full x_range=80/
+    # vy=-15/fuel=72 combined difficulty) stalled at 0% success for ~19.4M
+    # steps with no code bug found: diagnostics stayed normal throughout,
+    # rewards were properly negative (no capped-penalty-style exploit like
+    # vx_overspeed), and a verbose per-episode check showed a coherent,
+    # repeatable policy (vy perfectly controlled, vx consistently 29-49
+    # magnitude in BOTH directions -- not a lock, just insufficient
+    # correction authority against gusts that can outrun vx_desired's
+    # ~4 m/s max guidance speed at this x_range). Isolates wind reaction
+    # from the wide-spawn correction problem by narrowing x_range to 20
+    # (comparable to pad width, so spawn error is small) while introducing
+    # wind_mag=5.0 at full strength -- vy/fuel/pd_gain unchanged since
+    # those are already mastered. If this passes cleanly, wind-compensation
+    # is learnable and the combined difficulty (old stage 11, now 12) just
+    # needed it decomposed first; if it also stalls, the gust magnitude/
+    # duration itself may need revisiting, independent of spawn range.
+    11: dict(pad=20.0, alt=500.0,  vy=-15.0, x_range=20.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=72.0,  wind_mag=5.0),
+    # Stage 12 (was 11): the full combined difficulty -- wide x_range=80
+    # spawn AND wind_mag=5.0 together, now approached via stage 11's
+    # isolated wind skill instead of cold.
+    # Stage 12 keeps vy=-15 (matching stages 9/10) -- wind is the new challenge here,
+    # not descent speed; vy=-20 resumes from stage 13 onward.
+    # Extra fuel (stages 13-15) compensates for the lateral corrections wind forces
     # require -- note this trades away hover margin (TWR<1 at 80kg+), which is a
     # known, deliberate tension for those later/harder stages, not an oversight.
-    11: dict(pad=20.0, alt=500.0,  vy=-15.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=72.0,  wind_mag=5.0),
-    12: dict(pad=10.0, alt=500.0,  vy=-20.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=80.0,  wind_mag=10.0),
-    13: dict(pad=10.0, alt=750.0,  vy=-20.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=90.0,  wind_mag=15.0),
-    14: dict(pad=5.0,  alt=1000.0, vy=-20.0, x_range=100.0, vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=110.0, wind_mag=20.0),
+    12: dict(pad=20.0, alt=500.0,  vy=-15.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=72.0,  wind_mag=5.0),
+    13: dict(pad=10.0, alt=500.0,  vy=-20.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=80.0,  wind_mag=10.0),
+    14: dict(pad=10.0, alt=750.0,  vy=-20.0, x_range=80.0,  vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=90.0,  wind_mag=15.0),
+    15: dict(pad=5.0,  alt=1000.0, vy=-20.0, x_range=100.0, vx_range=5.0, angle_range=0.17, pd_gain=0.3, fuel=110.0, wind_mag=20.0),
 }
 MAX_STAGE = max(STAGES.keys())
 

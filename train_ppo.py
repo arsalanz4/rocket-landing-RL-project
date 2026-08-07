@@ -50,12 +50,15 @@ ADVANCE_THRESHOLD = {
     # learning happens.
     # Stage 9 (was 8): pd_gain raised 0.3->0.4 (more built-in attitude authority,
     # see STAGES comment). Stage 10 (was 9, "new"): intermediate pd_gain=0.35 step
-    # down to the old 0.3 before wind is introduced. Stages 11-14 are the old
-    # 10-13 renumbered (wind stages).
+    # down to the old 0.3 before wind is introduced.
+    # Stage 11 (new): wind-isolation pretraining (see STAGES comment) -- same
+    # confirm-clean-convergence reasoning as stage 7/0, thresholded the same
+    # as the old stage 11 it's isolating from. Stages 12-15 are the old
+    # 11-14 renumbered (full wind + combined-difficulty stages).
     0: 0.80,
     1: 0.65, 2: 0.65, 3: 0.60, 4: 0.60,
     5: 0.60, 6: 0.60, 7: 0.75, 8: 0.70,
-    9: 0.80, 10: 0.80, 11: 0.80, 12: 0.75, 13: 0.70, 14: 0.65,
+    9: 0.80, 10: 0.80, 11: 0.80, 12: 0.80, 13: 0.75, 14: 0.70, 15: 0.65,
 }
 EVAL_WINDOW               = 20
 EVAL_FREQ                 = 20_000
